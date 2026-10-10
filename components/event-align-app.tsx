@@ -9,6 +9,13 @@ import { initialStudy } from "@/lib/default-study";
 import { BENCHMARKS, INSTRUMENTS, type EventSeries, type EventStudyResponse, type SavedStudy, type StudyDefinition } from "@/lib/types";
 
 const COLORS = ["#2f6db0", "#7e9fc3", "#7b61a8", "#c27c5a", "#3e8f8b"];
+const CURRENT_SERIES_COLOR = "#46a57b";
+
+function seriesColor(series: EventSeries, allSeries: EventSeries[]) {
+  if (series.current) return CURRENT_SERIES_COLOR;
+  const historicalIndex = allSeries.filter((item) => !item.current).findIndex((item) => item.eventId === series.eventId);
+  return COLORS[Math.max(0, historicalIndex) % COLORS.length];
+}
 
 type TutorialFlowKey = "new-study" | "saved-studies";
 type TutorialStep = { target: string; title: string; copy: string; hint: string };
@@ -24,7 +31,7 @@ const TUTORIAL_FLOWS: Record<TutorialFlowKey, { name: string; duration: string; 
       { target: "#currentEventSection", title: "Enter the current event", copy: "Give the current event a clear label, choose its requested Day 0, and set the as-of date. Milestones can belong to the current event too.", hint: "A non-trading Day 0 maps forward to the next joint instrument and benchmark session." },
       { target: "#pastEventsSection", title: "Add comparable past events", copy: "Each historical episode needs a name and Day 0. Add milestones when a follow-up date should appear as an annotation on the chart.", hint: "Use events with the same economic catalyst when you want the historical distribution to be meaningful." },
       { target: "#runStudyButton", title: "Load the study data", copy: "FastEvent fills its independent adjusted-close cache, aligns joint sessions, and calculates the selected return lens.", hint: "Latest prices are never polled. Choose Latest and use Pull latest when you explicitly want a delayed quote." },
-      { target: "#chartPanel", title: "Read the aligned result", copy: "Every path is normalized to zero at its effective Day 0. Overlay shows individual episodes; Range emphasizes the historical median and interquartile band.", hint: "The dark EVENT D0 line is the alignment anchor. Lighter dashed lines are event-owned milestones." },
+      { target: "#chartPanel", title: "Read the aligned result", copy: "Every path is normalized to zero at its effective Day 0. Overlay shows individual episodes; Range emphasizes the historical median and interquartile band.", hint: "The dark EVENT D0 line is the alignment anchor. Milestones inherit their episode color, while the green latest-point guide marks the current event's newest EOD or explicitly pulled quote." },
     ],
   },
   "saved-studies": {
@@ -54,6 +61,10 @@ function shortDate(value: string) {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
 }
 
+function relativeDayLabel(day: number) {
+  return day === 0 ? "D0" : day > 0 ? `D+${day}` : `D${day}`;
+}
+
 function updateEvent(definition: StudyDefinition, current: boolean, eventIndex: number, field: "label" | "day0", value: string) {
   const next = clone(definition);
   const event = current ? next.currentEvent : next.historicalEvents[eventIndex];
@@ -69,19 +80,54 @@ function activeMilestoneKeys(definition: StudyDefinition) {
 
 function EventChart({ result, definition }: { result: EventStudyResponse; definition: StudyDefinition }) {
   const width = 980;
-  const height = 430;
-  const margin = { top: 54, right: 26, bottom: 44, left: 58 };
+  const plotHeight = 332;
+  const horizontalMargin = { right: 26, left: 58 };
   const visibleSeries = result.series.filter((series) => series.current || series.active);
-  const values = visibleSeries.flatMap((series) => series.points.flatMap((point) => point.value === null ? [] : [point.value]));
-  result.distribution.forEach((point) => values.push(point.q1, point.q3));
   const minDay = definition.display.showPre ? -definition.preDays : 0;
   const maxDay = definition.postDays;
+  const x = (day: number) => horizontalMargin.left + ((day - minDay) / Math.max(1, maxDay - minDay)) * (width - horizontalMargin.left - horizontalMargin.right);
+  const visibleMilestoneKeys = activeMilestoneKeys(definition);
+  const milestoneItems = (definition.display.showMilestones
+    ? visibleSeries.flatMap((series) => series.milestones
+      .filter((milestone) => visibleMilestoneKeys.has(`${milestone.eventId}:${milestone.id}`) && milestone.day >= minDay && milestone.day <= maxDay)
+      .map((milestone) => ({
+        ...milestone,
+        current: series.current,
+        color: seriesColor(series, result.series),
+        chartLabel: `${relativeDayLabel(milestone.day)} · ${milestone.label.slice(0, 28)}`,
+      })))
+    : [])
+    .slice(0, 8)
+    .sort((a, b) => a.day - b.day || Number(b.current) - Number(a.current));
+  const dayCounts = new Map<number, number>();
+  milestoneItems.forEach((milestone) => dayCounts.set(milestone.day, (dayCounts.get(milestone.day) ?? 0) + 1));
+  const dayPositions = new Map<number, number>();
+  const laneEnds: number[] = [];
+  const milestones = milestoneItems.map((milestone) => {
+    const position = dayPositions.get(milestone.day) ?? 0;
+    dayPositions.set(milestone.day, position + 1);
+    const lineX = x(milestone.day) + (position - ((dayCounts.get(milestone.day) ?? 1) - 1) / 2) * 3;
+    const estimatedWidth = Math.min(206, 14 + milestone.chartLabel.length * 4.7);
+    const labelX = Math.max(horizontalMargin.left, Math.min(lineX + 5, width - horizontalMargin.right - estimatedWidth));
+    let lane = laneEnds.findIndex((laneEnd) => labelX > laneEnd + 8);
+    if (lane < 0) lane = laneEnds.length;
+    laneEnds[lane] = labelX + estimatedWidth;
+    return { ...milestone, lineX, labelX, lane };
+  });
+  const margin = {
+    top: Math.max(54, 27 + Math.max(1, laneEnds.length) * 15),
+    right: horizontalMargin.right,
+    bottom: 44,
+    left: horizontalMargin.left,
+  };
+  const height = margin.top + plotHeight + margin.bottom;
+  const values = visibleSeries.flatMap((series) => series.points.flatMap((point) => point.value === null ? [] : [point.value]));
+  result.distribution.forEach((point) => values.push(point.q1, point.q3));
   const minValue = values.length ? Math.min(...values) : -1;
   const maxValue = values.length ? Math.max(...values) : 1;
   const pad = Math.max(1, (maxValue - minValue) * 0.14);
   const yMin = Math.floor((minValue - pad) * 2) / 2;
   const yMax = Math.ceil((maxValue + pad) * 2) / 2;
-  const x = (day: number) => margin.left + ((day - minDay) / Math.max(1, maxDay - minDay)) * (width - margin.left - margin.right);
   const y = (value: number) => margin.top + ((yMax - value) / Math.max(0.001, yMax - yMin)) * (height - margin.top - margin.bottom);
   const path = (series: EventSeries) => series.points.filter((point) => point.value !== null).map((point, index) => `${index ? "L" : "M"}${x(point.day).toFixed(1)},${y(point.value!).toFixed(1)}`).join(" ");
   const ticks = Array.from({ length: 6 }, (_, index) => yMin + (index / 5) * (yMax - yMin));
@@ -93,10 +139,14 @@ function EventChart({ result, definition }: { result: EventStudyResponse; defini
   const bandPath = band.length
     ? `${band.map((point, index) => `${index ? "L" : "M"}${x(point.day)},${y(point.q3)}`).join(" ")} ${[...band].reverse().map((point) => `L${x(point.day)},${y(point.q1)}`).join(" ")} Z`
     : "";
-  const visibleMilestoneKeys = activeMilestoneKeys(definition);
-  const milestones = definition.display.showMilestones
-    ? visibleSeries.flatMap((series) => series.milestones.filter((milestone) => visibleMilestoneKeys.has(`${milestone.eventId}:${milestone.id}`) && milestone.day >= minDay && milestone.day <= maxDay))
-    : [];
+  const currentSeries = visibleSeries.find((series) => series.current);
+  const latestPoint = currentSeries?.points.findLast((point) => point.value !== null && point.day >= minDay && point.day <= maxDay) ?? null;
+  const latestX = latestPoint ? x(latestPoint.day) : 0;
+  const latestY = latestPoint?.value === null || latestPoint === null ? 0 : y(latestPoint.value);
+  const latestBadgeWidth = 88;
+  const latestBadgeX = Math.max(margin.left + 3, Math.min(latestX - latestBadgeWidth / 2, width - margin.right - latestBadgeWidth - 3));
+  const valueLabelOnRight = latestX < width - margin.right - 74;
+  const valueLabelY = latestPoint && latestY < margin.top + 70 ? latestY + 19 : latestY - 10;
 
   return <div className="chart-wrap">
     <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Aligned event performance chart">
@@ -107,21 +157,31 @@ function EventChart({ result, definition }: { result: EventStudyResponse; defini
       </g>)}
       {xTicks.map((tick) => <g key={tick}>
         {tick !== 0 && <line x1={x(tick)} x2={x(tick)} y1={margin.top} y2={height - margin.bottom} stroke="#f0f3f6" />}
-        <text x={x(tick)} y={height - 17} textAnchor="middle" className="axis-label">{tick === 0 ? "D0" : tick > 0 ? `D+${tick}` : `D${tick}`}</text>
+        <text x={x(tick)} y={height - 17} textAnchor="middle" className="axis-label">{relativeDayLabel(tick)}</text>
       </g>)}
       {definition.display.showBand && bandPath && <path d={bandPath} fill="#dbe7f3" opacity=".62" />}
       {definition.display.showMedian && band.length > 0 && <path d={band.map((point, index) => `${index ? "L" : "M"}${x(point.day)},${y(point.median)}`).join(" ")} fill="none" stroke="#344054" strokeWidth="1.7" strokeDasharray="3 4" />}
-      {milestones.slice(0, 8).map((milestone, index) => <g key={`${milestone.eventId}-${milestone.id}`}>
-        <line x1={x(milestone.day)} x2={x(milestone.day)} y1={margin.top} y2={height - margin.bottom} stroke="#6b93b8" strokeWidth="1" strokeDasharray="3 4" />
-        <text x={x(milestone.day) + 5} y={15 + (index % 3) * 14} className="milestone-label">D{milestone.day >= 0 ? "+" : ""}{milestone.day} · {milestone.label.slice(0, 28)}</text>
+      {milestones.map((milestone) => <g key={`${milestone.eventId}-${milestone.id}`}>
+        <line x1={milestone.lineX} x2={milestone.lineX} y1={margin.top} y2={height - margin.bottom} stroke={milestone.color} strokeWidth={milestone.current ? "1.45" : "1"} strokeDasharray="3 4" opacity={milestone.current ? ".92" : ".68"} />
+        <text x={milestone.labelX} y={16 + milestone.lane * 15} className="milestone-label" style={{ fill: milestone.color }}>{milestone.chartLabel}</text>
       </g>)}
       <g className="day-zero-marker">
         <line x1={x(0)} x2={x(0)} y1={margin.top} y2={height - margin.bottom} />
         <rect x={x(0) - 31} y={margin.top + 6} width="62" height="19" rx="9.5" />
         <text x={x(0)} y={margin.top + 19} textAnchor="middle">EVENT D0</text>
       </g>
-      {definition.display.view === "overlay" && activeHistorical.map((series, index) => <path key={series.eventId} d={path(series)} fill="none" stroke={COLORS[index % COLORS.length]} strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"><title>{series.label}</title></path>)}
-      {visibleSeries.filter((series) => series.current).map((series) => <path key={series.eventId} d={path(series)} fill="none" stroke="#46a57b" strokeWidth="2.8" strokeDasharray="7 4" strokeLinecap="round" strokeLinejoin="round"><title>{series.label}</title></path>)}
+      {latestPoint && <g className="latest-guide">
+        <line x1={latestX} x2={latestX} y1={margin.top} y2={height - margin.bottom} />
+        <rect x={latestBadgeX} y={margin.top + 32} width={latestBadgeWidth} height="20" rx="10" />
+        <text x={latestBadgeX + latestBadgeWidth / 2} y={margin.top + 45.5} textAnchor="middle">{relativeDayLabel(latestPoint.day)} · {result.priceStatus === "latest" ? "LATEST" : "EOD"}</text>
+      </g>}
+      {definition.display.view === "overlay" && activeHistorical.map((series) => <path key={series.eventId} d={path(series)} fill="none" stroke={seriesColor(series, result.series)} strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"><title>{series.label}</title></path>)}
+      {visibleSeries.filter((series) => series.current).map((series) => <path key={series.eventId} d={path(series)} fill="none" stroke={CURRENT_SERIES_COLOR} strokeWidth="2.8" strokeDasharray="7 4" strokeLinecap="round" strokeLinejoin="round"><title>{series.label}</title></path>)}
+      {latestPoint && latestPoint.value !== null && <g className="latest-point-marker">
+        <title>Latest {result.priceStatus === "latest" ? "intraday" : "EOD"} point: {relativeDayLabel(latestPoint.day)}, {pct(latestPoint.value)}</title>
+        <circle cx={latestX} cy={latestY} r="6" />
+        <text x={latestX + (valueLabelOnRight ? 10 : -10)} y={valueLabelY} textAnchor={valueLabelOnRight ? "start" : "end"}>{pct(latestPoint.value)}</text>
+      </g>}
       <text x={margin.left} y={margin.top - 12} className="axis-title">Cumulative return</text>
       <text x={width - margin.right} y={height - 4} textAnchor="end" className="axis-title">Trading days from event</text>
     </svg>
@@ -252,6 +312,7 @@ export function EventAlignApp() {
 
   const visibleMilestoneKeys = activeMilestoneKeys(definition);
   const allMilestones = result?.series.flatMap((series) => series.milestones).filter((item) => visibleMilestoneKeys.has(`${item.eventId}:${item.id}`)) ?? [];
+  const milestoneColors = new Map(result?.series.map((series) => [series.eventId, seriesColor(series, result.series)]));
   const betaDisabled = Boolean(
     result
     && result.definition.instrument === definition.instrument
@@ -325,14 +386,14 @@ export function EventAlignApp() {
         <article id="chartPanel" className="panel chart-panel">
           <div className="panel-head"><div><h2>Performance after similar events</h2><p>Trading-day alignment using FastEvent&apos;s independent adjusted-close cache.</p></div><div className="segments compact"><button className={definition.display.view === "overlay" ? "active" : ""} onClick={() => setDefinition({ ...definition, display: { ...definition.display, view: "overlay" } })}>Overlay</button><button className={definition.display.view === "range" ? "active" : ""} onClick={() => setDefinition({ ...definition, display: { ...definition.display, view: "range" } })}>Range</button></div></div>
           {result ? <>
-            <div className="legend">{result.series.map((series, index) => <span key={series.eventId}><i style={{ background: series.current ? "#46a57b" : COLORS[index % COLORS.length] }} />{series.current ? "Current · " : ""}{series.label}</span>)}{definition.display.showMedian && <span><i className="median-line" />Past median</span>}</div>
+            <div className="legend">{result.series.map((series) => <span key={series.eventId}><i style={{ background: seriesColor(series, result.series) }} />{series.current ? "Current · " : ""}{series.label}</span>)}{definition.display.showMedian && <span><i className="median-line" />Past median</span>}</div>
             <EventChart result={result} definition={definition} />
           </> : <div className="empty-chart">{busy ? <><LoaderCircle className="spin" />Loading market data…</> : <><BarChart3 />Load study data to calculate aligned returns.</>}</div>}
         </article>
 
         {result && <div className="below-grid">
           <article className="panel"><div className="panel-head"><div><h2>Day 0 definitions</h2><p>Requested dates map to the next joint trading session when needed.</p></div></div><div className="definition-list">{result.series.map((series) => <div key={series.eventId}><CalendarDays size={15} /><span><strong>{shortDate(series.effectiveDay0)} · Day 0</strong>{series.label}{series.requestedDay0 !== series.effectiveDay0 && <small>Requested {shortDate(series.requestedDay0)}</small>}</span></div>)}</div></article>
-          <article className="panel"><div className="panel-head"><div><h2>Visible milestones</h2><p>Annotations owned by current and historical events.</p></div></div><div className="definition-list">{allMilestones.length ? allMilestones.map((milestone) => <div key={`${milestone.eventId}-${milestone.id}`}><span className="milestone-dot" /><span><strong>{shortDate(milestone.effectiveDate)} · D{milestone.day >= 0 ? "+" : ""}{milestone.day}</strong>{milestone.label}<small>{milestone.eventLabel}</small></span></div>) : <p className="quiet">No visible milestones.</p>}</div></article>
+          <article className="panel"><div className="panel-head"><div><h2>Visible milestones</h2><p>Annotations owned by current and historical events.</p></div></div><div className="definition-list">{allMilestones.length ? allMilestones.map((milestone) => <div key={`${milestone.eventId}-${milestone.id}`}><span className="milestone-dot" style={{ background: milestoneColors.get(milestone.eventId) }} /><span><strong>{shortDate(milestone.effectiveDate)} · {relativeDayLabel(milestone.day)}</strong>{milestone.label}<small>{milestone.eventLabel}</small></span></div>) : <p className="quiet">No visible milestones.</p>}</div></article>
         </div>}
 
         {result && <article className="panel results-panel"><div className="panel-head"><div><h2>Outcome comparison</h2><p>Percentage points from each event&apos;s effective Day 0.</p></div></div><div className="table-scroll"><table><thead><tr><th>Event</th><th>Day 0</th><th>D+1</th><th>D+5</th><th>D+20</th><th>Worst drawdown</th></tr></thead><tbody>{result.outcomes.map((row) => <tr key={row.eventId}><td>{row.label}{row.current && <em>Current</em>}</td><td>{shortDate(row.effectiveDay0)}</td><td>{pct(row.day1)}</td><td>{pct(row.day5)}</td><td>{pct(row.day20)}</td><td>{pct(row.worstDrawdown)}</td></tr>)}</tbody></table></div></article>}
@@ -388,7 +449,7 @@ function TutorialChooser({ onStart }: { onStart: (flowKey: TutorialFlowKey) => v
         <button className="primary" onClick={() => onStart(flowKey)}>Start tutorial</button>
       </article>;
     })}</div>
-    <div className="tutorial-reference"><strong>Chart guide</strong><span><b>EVENT D0</b> is the common alignment anchor. Dashed vertical lines are milestones. All paths use adjusted closes; Latest appears only after an explicit pull.</span></div>
+    <div className="tutorial-reference"><strong>Chart guide</strong><span><b>EVENT D0</b> is the common alignment anchor. Milestone lines inherit their episode color. The green latest guide, dot, and return label mark the current event&apos;s newest plotted point; intraday data appears only after an explicit pull.</span></div>
   </div>;
 }
 

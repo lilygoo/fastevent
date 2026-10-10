@@ -100,6 +100,11 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .day-zero-marker line { stroke: #173f6b; stroke-width: 2.4; }
 .day-zero-marker rect { fill: #173f6b; stroke: white; stroke-width: 1.5; }
 .day-zero-marker text { fill: white; font-size: 8px; font-weight: 800; letter-spacing: .045em; }
+.latest-guide line { stroke: #46a57b; stroke-width: 1.5; stroke-dasharray: 5 4; opacity: .9; }
+.latest-guide rect { fill: #effaf5; stroke: #46a57b; stroke-width: 1.2; }
+.latest-guide text { fill: #267b59; font-size: 8px; font-weight: 800; letter-spacing: .035em; }
+.latest-point-marker circle { fill: #46a57b; stroke: white; stroke-width: 3; }
+.latest-point-marker text { fill: #267b59; font-size: 10px; font-weight: 800; paint-order: stroke; stroke: white; stroke-width: 4px; }
 .empty-chart { min-height: 445px; display: grid; place-content: center; justify-items: center; gap: 10px; color: #8190a3; font-size: 12px; }
 .empty-chart svg { width: 28px; height: 28px; }
 .below-grid { margin-top: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
