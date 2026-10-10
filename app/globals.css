@@ -96,7 +96,6 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .chart-wrap { width: 100%; padding: 2px 12px 8px; overflow-x: auto; }
 .chart-wrap svg { width: 100%; min-width: 680px; height: auto; display: block; }
 .axis-label { fill: #748094; font-size: 10px; }
-.zero-axis-label { fill: #3f536b; font-weight: 800; }
 .axis-title { fill: #64748b; font-size: 10px; font-weight: 650; }
 .milestone-label { fill: #617287; font-size: 8.5px; font-weight: 650; paint-order: stroke; stroke: white; stroke-width: 3px; }
 .day-zero-marker line { stroke: #173f6b; stroke-width: 2.4; }

@@ -20,7 +20,7 @@ export async function GET(_request: Request, context: Context) {
 export async function PATCH(request: Request, context: Context) {
   try {
     const parsed = updateStudySchema.safeParse(await request.json());
-    if (!parsed.success) return NextResponse.json({ error: "Invalid study update.", issues: parsed.error.issues }, { status: 400 });
+    if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid study update.", issues: parsed.error.issues }, { status: 400 });
     const { id } = await context.params;
     const study = await updateStudy(id, parsed.data.definition, parsed.data.revision);
     if (!study) return NextResponse.json({ error: "This study changed in another session. Reload and retry." }, { status: 409 });

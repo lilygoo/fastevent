@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { todayEastern } from "@/lib/dates";
 import { initialStudy } from "@/lib/default-study";
+import { alignEditedMilestones } from "@/lib/calculations";
 import { BENCHMARKS, INSTRUMENTS, type AlignedPoint, type EventSeries, type EventStudyResponse, type ReturnLens, type SavedStudy, type StudyDefinition } from "@/lib/types";
 
 const COLORS = ["#2f6db0", "#7e9fc3", "#7b61a8", "#c27c5a", "#3e8f8b"];
@@ -92,12 +93,6 @@ function updateEvent(definition: StudyDefinition, current: boolean, eventIndex: 
   return next;
 }
 
-function activeMilestoneKeys(definition: StudyDefinition) {
-  return new Set([definition.currentEvent, ...definition.historicalEvents].flatMap((event) =>
-    event.milestones.filter((milestone) => milestone.active).map((milestone) => `${event.id}:${milestone.id}`),
-  ));
-}
-
 function EventChart({ result, definition }: { result: EventStudyResponse; definition: StudyDefinition }) {
   const width = 980;
   const plotHeight = 332;
@@ -106,10 +101,10 @@ function EventChart({ result, definition }: { result: EventStudyResponse; defini
   const minDay = definition.display.showPre ? -definition.preDays : 0;
   const maxDay = definition.postDays;
   const x = (day: number) => horizontalMargin.left + ((day - minDay) / Math.max(1, maxDay - minDay)) * (width - horizontalMargin.left - horizontalMargin.right);
-  const visibleMilestoneKeys = activeMilestoneKeys(definition);
+  const editedMilestones = alignEditedMilestones(definition, visibleSeries);
   const milestoneItems = (definition.display.showMilestones
-    ? visibleSeries.flatMap((series) => series.milestones
-      .filter((milestone) => visibleMilestoneKeys.has(`${milestone.eventId}:${milestone.id}`) && milestone.day >= minDay && milestone.day <= maxDay)
+    ? visibleSeries.flatMap((series) => editedMilestones
+      .filter((milestone) => milestone.eventId === series.eventId && milestone.day >= minDay && milestone.day <= maxDay)
       .map((milestone) => ({
         ...milestone,
         current: series.current,
@@ -186,8 +181,8 @@ function EventChart({ result, definition }: { result: EventStudyResponse; defini
     <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Aligned event performance chart">
       <rect x={margin.left} y={margin.top} width={width - margin.left - margin.right} height={height - margin.top - margin.bottom} fill="#fff" />
       {ticks.map((tick) => <g key={tick}>
-        <line x1={margin.left} x2={width - margin.right} y1={y(tick)} y2={y(tick)} stroke={tick === 0 ? "#aebdcd" : "#e8edf3"} strokeWidth={tick === 0 ? "1.5" : "1"} />
-        <text x={margin.left - 10} y={y(tick) + 4} textAnchor="end" className={tick === 0 ? "axis-label zero-axis-label" : "axis-label"}>{tick === 0 ? "0.0% · D0" : `${tick.toFixed(1)}%`}</text>
+        <line x1={margin.left} x2={width - margin.right} y1={y(tick)} y2={y(tick)} stroke="#e8edf3" />
+        <text x={margin.left - 10} y={y(tick) + 4} textAnchor="end" className="axis-label">{`${tick.toFixed(1)}%`}</text>
       </g>)}
       {xTicks.map((tick) => <g key={tick}>
         {tick !== 0 && <line x1={x(tick)} x2={x(tick)} y1={margin.top} y2={height - margin.bottom} stroke="#f0f3f6" />}
@@ -310,7 +305,7 @@ export function EventAlignApp() {
         body: JSON.stringify(activeStudy ? { definition, revision: activeStudy.revision } : { definition }),
       });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "Unable to save study.");
+      if (!response.ok) throw new Error(payload.issues?.[0]?.message ?? payload.error ?? "Unable to save study.");
       const savedStudy = payload.study as SavedStudy;
       setActiveStudy(savedStudy);
       setNotice(activeStudy ? "Study updated." : "Study saved. Beta checked for this new study.");
@@ -355,8 +350,7 @@ export function EventAlignApp() {
     const anchor = document.createElement("a"); anchor.href = url; anchor.download = "event-aligned-returns.csv"; anchor.click(); URL.revokeObjectURL(url);
   }
 
-  const visibleMilestoneKeys = activeMilestoneKeys(definition);
-  const allMilestones = result?.series.flatMap((series) => series.milestones).filter((item) => visibleMilestoneKeys.has(`${item.eventId}:${item.id}`)) ?? [];
+  const allMilestones = result ? alignEditedMilestones(definition, result.series) : [];
   const milestoneColors = new Map(result?.series.map((series) => [series.eventId, seriesColor(series, result.series)]));
   const displayedOutcomes = result?.outcomesByLens?.[definition.lens] ?? result?.outcomes ?? [];
   const betaDisabled = Boolean(
@@ -478,7 +472,7 @@ function Toggle({ label, checked, onChange }: { label: string; checked: boolean;
 function MilestoneEditor({ definition, setDefinition, current, eventIndex }: { definition: StudyDefinition; setDefinition: (definition: StudyDefinition) => void; current: boolean; eventIndex: number }) {
   const selected = current ? definition.currentEvent : definition.historicalEvents[eventIndex];
   return <details className="milestones"><summary>Milestones <span>{selected.milestones.length}</span><ChevronDown size={13} /></summary><div>
-    {selected.milestones.map((milestone, milestoneIndex) => <div className={`milestone-row${milestone.active ? "" : " is-hidden"}`} key={milestone.id}><input value={milestone.label} aria-label="Milestone label" onChange={(event) => { const next = clone(definition); const target = current ? next.currentEvent : next.historicalEvents[eventIndex]; target.milestones[milestoneIndex].label = event.target.value; setDefinition(next); }} /><input type="date" value={milestone.date} aria-label="Milestone date" onChange={(event) => { const next = clone(definition); const target = current ? next.currentEvent : next.historicalEvents[eventIndex]; target.milestones[milestoneIndex].date = event.target.value; setDefinition(next); }} /><button className="milestone-visibility" aria-label={`${milestone.active ? "Hide" : "Show"} milestone ${milestone.label}`} aria-pressed={!milestone.active} title={milestone.active ? "Hide milestone" : "Show milestone"} onClick={() => { const next = clone(definition); const target = current ? next.currentEvent : next.historicalEvents[eventIndex]; target.milestones[milestoneIndex].active = !target.milestones[milestoneIndex].active; setDefinition(next); }}>{milestone.active ? <Eye size={13} /> : <EyeOff size={13} />}</button><button aria-label={`Delete milestone ${milestone.label}`} title="Delete milestone" onClick={() => { const next = clone(definition); const target = current ? next.currentEvent : next.historicalEvents[eventIndex]; target.milestones.splice(milestoneIndex, 1); setDefinition(next); }}><X size={13} /></button></div>)}
+    {selected.milestones.map((milestone, milestoneIndex) => <div className={`milestone-row${milestone.active ? "" : " is-hidden"}`} key={milestone.id}><input value={milestone.label} aria-label="Milestone label" onChange={(event) => { const next = clone(definition); const target = current ? next.currentEvent : next.historicalEvents[eventIndex]; target.milestones[milestoneIndex].label = event.target.value; setDefinition(next); }} /><input type="date" min={selected.day0} max={definition.asOf} value={milestone.date} aria-label="Milestone date" onChange={(event) => { const next = clone(definition); const target = current ? next.currentEvent : next.historicalEvents[eventIndex]; target.milestones[milestoneIndex].date = event.target.value; setDefinition(next); }} /><button className="milestone-visibility" aria-label={`${milestone.active ? "Hide" : "Show"} milestone ${milestone.label}`} aria-pressed={!milestone.active} title={milestone.active ? "Hide milestone" : "Show milestone"} onClick={() => { const next = clone(definition); const target = current ? next.currentEvent : next.historicalEvents[eventIndex]; target.milestones[milestoneIndex].active = !target.milestones[milestoneIndex].active; setDefinition(next); }}>{milestone.active ? <Eye size={13} /> : <EyeOff size={13} />}</button><button aria-label={`Delete milestone ${milestone.label}`} title="Delete milestone" onClick={() => { const next = clone(definition); const target = current ? next.currentEvent : next.historicalEvents[eventIndex]; target.milestones.splice(milestoneIndex, 1); setDefinition(next); }}><X size={13} /></button></div>)}
     <button className="mini-add" onClick={() => { const next = clone(definition); const target = current ? next.currentEvent : next.historicalEvents[eventIndex]; target.milestones.push({ id: crypto.randomUUID(), label: "New milestone", date: target.day0, active: true }); setDefinition(next); }}><Plus size={12} />Add milestone</button>
   </div></details>;
 }

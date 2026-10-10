@@ -1,4 +1,5 @@
 import type {
+  AlignedMilestone,
   BetaReading,
   DistributionPoint,
   EventSeries,
@@ -148,6 +149,27 @@ export function alignEventSeries(
 
 export function pointReturn(point: EventSeries["points"][number], lens: ReturnLens) {
   return lens === "raw" ? point.rawReturn : lens === "excess" ? point.excessReturn : point.betaAdjustedReturn;
+}
+
+export function alignEditedMilestones(definition: StudyDefinition, series: EventSeries[]): AlignedMilestone[] {
+  return series.flatMap((eventSeries) => {
+    const event = eventSeries.current
+      ? definition.currentEvent
+      : definition.historicalEvents.find((candidate) => candidate.id === eventSeries.eventId);
+    if (!event) return [];
+
+    return event.milestones.flatMap((milestone) => {
+      if (!milestone.active) return [];
+      const point = eventSeries.points.find((candidate) => candidate.date >= milestone.date);
+      if (point) {
+        return [{ ...milestone, eventId: event.id, eventLabel: event.label, day: point.day, effectiveDate: point.date }];
+      }
+      const previouslyAligned = eventSeries.milestones.find((candidate) =>
+        candidate.id === milestone.id && candidate.date === milestone.date,
+      );
+      return previouslyAligned ? [{ ...previouslyAligned, ...milestone, eventLabel: event.label }] : [];
+    });
+  });
 }
 
 export function calculateDistribution(series: EventSeries[], lens: ReturnLens = "raw"): DistributionPoint[] {

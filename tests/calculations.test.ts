@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { alignEventSeries, calculateBeta, calculateDistribution, calculateOutcomes } from "../lib/calculations";
+import { alignEditedMilestones, alignEventSeries, calculateBeta, calculateDistribution, calculateOutcomes } from "../lib/calculations";
 import { initialStudy } from "../lib/default-study";
 import type { BetaReading, PriceRow } from "../lib/types";
 
@@ -106,6 +106,25 @@ test("all return lenses are available from one aligned series", () => {
   assert.ok(calculateDistribution(series, "beta").length > 0);
   assert.notDeepEqual(calculateOutcomes(series, "raw"), calculateOutcomes(series, "excess"));
   assert.notDeepEqual(calculateOutcomes(series, "excess"), calculateOutcomes(series, "beta"));
+});
+
+test("edited current and historical milestone dates realign against loaded sessions", () => {
+  const rows = weekdayRows("2026-08-10", 60);
+  const definition = structuredClone(initialStudy);
+  definition.asOf = "2026-10-09";
+  definition.preDays = 5;
+  definition.postDays = 36;
+  const historical = alignEventSeries(definition, definition.historicalEvents[0], rows, null, false);
+  const currentDefinition = { ...definition.currentEvent, day0: "2026-08-24" };
+  const current = alignEventSeries(definition, currentDefinition, rows, null, true);
+
+  definition.historicalEvents[0].milestones[1].date = "2026-08-19";
+  definition.currentEvent = currentDefinition;
+  definition.currentEvent.milestones[0].date = "2026-08-26";
+  const milestones = alignEditedMilestones(definition, [historical, current]);
+
+  assert.equal(milestones.find((item) => item.id === definition.historicalEvents[0].milestones[1].id)?.effectiveDate, "2026-08-19");
+  assert.equal(milestones.find((item) => item.id === definition.currentEvent.milestones[0].id)?.effectiveDate, "2026-08-26");
 });
 
 test("beta rejects inadequate observations and inadequate benchmark coverage", () => {
