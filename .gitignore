@@ -211,6 +211,16 @@ tempCodeRunnerFile.py
 # PyPI configuration file
 .pypirc
 
+# Node / Next.js
+node_modules/
+.next/
+!/lib/
+!/lib/**
+out/
+*.tsbuildinfo
+.env.local
+.vercel/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

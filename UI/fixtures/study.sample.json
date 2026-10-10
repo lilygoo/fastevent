@@ -1,0 +1,40 @@
+{
+  "name": "Two ARR debates: SOXX vs QQQ",
+  "instrument": "SOXX",
+  "benchmark": "QQQ",
+  "lens": "beta",
+  "preDays": 5,
+  "postDays": 36,
+  "asOf": "2026-10-09",
+  "priceMode": "eod",
+  "currentEvent": {
+    "id": "openai-arr",
+    "label": "OpenAI ARR report",
+    "day0": "2026-10-07",
+    "active": true,
+    "milestones": [
+      { "id": "openai-ft-50b", "label": "FT reports ARR of approximately $50B", "date": "2026-10-08", "active": true }
+    ]
+  },
+  "historicalEvents": [
+    {
+      "id": "anthropic-arr",
+      "label": "Anthropic $65B ARR report",
+      "day0": "2026-08-17",
+      "active": true,
+      "milestones": [
+        { "id": "anthropic-65b-first", "label": "$65B ARR first reported", "date": "2026-08-17", "active": true },
+        { "id": "anthropic-expectation-gap", "label": "Expectation gap enters market discussion", "date": "2026-08-18", "active": true },
+        { "id": "anthropic-ft-annualization", "label": "FT questions ARR annualization methodology", "date": "2026-08-27", "active": true },
+        { "id": "anthropic-axios-gross-net", "label": "Axios explains gross versus net", "date": "2026-09-03", "active": true }
+      ]
+    }
+  ],
+  "display": {
+    "showMedian": true,
+    "showBand": true,
+    "showPre": true,
+    "showMilestones": true,
+    "view": "overlay"
+  }
+}

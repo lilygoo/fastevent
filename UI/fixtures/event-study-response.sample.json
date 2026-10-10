@@ -1,0 +1,21 @@
+{
+  "definition": { "$ref": "study.sample.json" },
+  "beta": null,
+  "betaAvailable": false,
+  "series": [],
+  "distribution": [],
+  "outcomes": [],
+  "dataAsOf": "2026-10-09",
+  "priceStatus": "eod",
+  "quoteAsOf": null,
+  "provenance": {
+    "marketDataProvider": "yahoo",
+    "priceBasis": "adjusted_close",
+    "betaMethod": "ols_with_intercept",
+    "betaWindowCalendarDays": 365,
+    "betaMinimumObservations": 200,
+    "betaMinimumCoverage": 0.9,
+    "calculationVersion": "v1"
+  },
+  "warnings": ["Illustrative response shape only; no chart-derived beta or market-return values are seeded."]
+}

@@ -1,100 +1,75 @@
-# EventAlign handoff kit
+# FastEvent
 
-This repository is a production handoff package for the EventAlign interactive prototype. The target application lets a user define a current market event and comparable historical Day 0 events, align their performance paths, annotate historical milestones, save studies, and optionally pull a current live price.
+FastEvent is a private Next.js event-study workspace. It aligns an instrument and benchmark by joint trading sessions, compares a current event with historical episodes, and supports raw, excess, and beta-adjusted cumulative adjusted-close returns.
 
-## Canonical reference
+The production app is implemented beside the frozen visual reference at `UI/prototype/event_alignment_demo_v8.html`. The prototype is not a data source and remains unchanged.
 
-- `prototype/event_alignment_demo_v8.html` is the frozen visual and behavioral reference.
-- `prototype/event_alignment_demo_v8_preview.png` is a quick visual reference.
-- The prototype is self-contained: HTML, CSS, SVG charting, and JavaScript are all in one file.
-- The prototype uses deterministic simulated paths and browser `localStorage`; it does not call a market-data service.
+## Local setup
 
-Do not replace or edit the prototype during the initial migration. Build the production implementation beside it and compare behavior against it.
-
-## View the prototype
-
-Open `prototype/event_alignment_demo_v8.html` directly in a browser, or serve the repository locally:
+Requirements: Node.js 22+, npm, and a Supabase project.
 
 ```bash
-python3 -m http.server 8000
+npm install
+cp .env.example .env.local
+npm run dev
 ```
 
-Then open:
+Without Supabase variables, the app uses an in-memory seeded study library and can still fetch market data, but prices, quotes, studies, and beta records will not survive a process restart.
 
-```text
-http://localhost:8000/prototype/event_alignment_demo_v8.html
-```
+## Database
 
-## Current approved behavior
+Apply `supabase/migrations/202610090001_fastevent.sql` to the existing Supabase project. The migration creates only these service-role-only tables:
 
-The prototype includes:
+- `fastevent_prices`
+- `fastevent_price_fetches`
+- `fastevent_quote_cache`
+- `fastevent_betas`
+- `fastevent_studies`
 
-- a current event and multiple editable historical events;
-- optional milestones owned by each historical event;
-- aligned current, historical, median, and interquartile return views;
-- a dotted historical median line and matching legend treatment;
-- EOD and explicitly requested latest-price modes;
-- LIVE, EOD, delayed, and stale display concepts;
-- a current-return callout on the chart;
-- a blank New study workflow with required-field validation;
-- separate `Save` and `Saved studies` actions;
-- source-aware saving, loading, updating, and deletion;
-- two guided tutorials under `How it works`;
-- CSV export and an aligned-results table.
+No Price Tracker or Risk Lens table is referenced. FastEvent price rows are retained indefinitely in v1.
 
-## Important terminology
-
-- **Working study**: the setup currently open in the editor.
-- **Saved study**: a persisted setup that can be loaded later.
-- **Current source**: the saved study to which the top-bar `Save` action writes.
-- **Save**: creates a source on first save, then updates that same source.
-- **Saved studies**: opens the retrieval library; it does not save the current setup.
-
-Market results and live quotes should be refreshed after loading a saved study. Do not treat a persisted quote or previous response as current data.
-
-## Recommended target stack
-
-- Frontend: React, TypeScript, and Vite
-- Backend: Python and FastAPI
-- Market data: provider interface with a mock provider first, then one approved real provider
-- Persistence: browser storage during UI migration, SQLite for a local single-user version, and PostgreSQL when multi-user or deployed
-- Tests: Vitest and Testing Library for frontend behavior; pytest for calculations and API contracts
-
-The stack is a recommendation, not a requirement. Keep the backend provider-neutral so Bloomberg, Polygon, Alpaca, an internal source, or another vendor can be added without rewriting the UI.
-
-## Repository guide
-
-- `AGENTS.md`: shared instructions for coding agents
-- `CLAUDE.md`: imports the shared agent instructions
-- `PROMPT_START_HERE.md`: first prompt for a Codex or Claude Code session
-- `docs/PRODUCT_SPEC.md`: current product behavior
-- `docs/DATA_CONTRACT.md`: proposed frontend/backend and persistence contracts
-- `docs/IMPLEMENTATION_PLAN.md`: phased migration plan
-- `docs/DECISIONS.md`: approved deviations and unresolved choices
-- `docs/UI_ACCEPTANCE_CHECKLIST.md`: parity checklist for the prototype migration
-- `docs/PROTOTYPE_CHANGELOG.md`: feature history and intent
-- `fixtures/`: sample configuration, saved-study, and calculated-response objects
-
-## Suggested first session
-
-1. Initialize Git and commit this package unchanged.
-2. Start Codex or Claude Code from the repository root.
-3. Paste the contents of `PROMPT_START_HERE.md`.
-4. Review and approve only the proposed Phase 1 plan.
-5. Keep each phase in a separate commit so UI, calculation, and provider regressions are easy to isolate.
-
-Example:
+Set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` only in the server environment, then seed the shared study:
 
 ```bash
-git init
-git add .
-git commit -m "Import EventAlign v8 handoff"
-
-codex
-# or
-claude
+npm run bootstrap
 ```
 
-## Security
+The command inserts or updates the approved ARR study and is safe to rerun. It does not insert chart-derived returns or beta values. Prices and beta are populated through the normal study load/run path.
 
-Never place vendor API keys, Bloomberg credentials, database passwords, or other secrets in frontend code, committed files, screenshots, or prompts. Real data access belongs behind the backend. Use environment variables and commit only an `.env.example` containing variable names, not values.
+## Calculation rules
+
+- All return paths and beta estimates use adjusted closes.
+- Beta uses 365 trailing calendar days of daily simple returns and OLS with an intercept.
+- A beta requires at least 200 aligned observations and 90% benchmark coverage.
+- A cached beta is fresh through exactly 30 calendar days; it refreshes only on study creation or saved-study load.
+- A failed refresh falls back to an older beta with a warning. With no beta, raw and excess inputs remain available and beta-adjusted values are null.
+- A non-trading Day 0 maps to the next joint instrument/benchmark session.
+
+## API
+
+- `POST /api/event-studies/run`
+- `POST /api/market-data/quote`
+- `GET/POST /api/studies`
+- `GET/PATCH/DELETE /api/studies/[id]`
+
+Updates and deletes require the current `revision`; stale writes receive HTTP 409.
+
+## Verification
+
+```bash
+npm run typecheck
+npm test
+npm run build
+```
+
+## Vercel deployment
+
+1. Import this repository as a Vercel Next.js project.
+2. Add `SUPABASE_URL` and `SUPABASE_SECRET_KEY` as encrypted server environment variables for each intended environment.
+3. Add the optional cache/version variables from `.env.example` if the defaults should be overridden.
+4. In Vercel project settings, enable Deployment Protection / Vercel Authentication for production and preview deployments.
+5. Deploy, apply the Supabase migration once, and run `npm run bootstrap` with production environment variables.
+
+Do not create a `NEXT_PUBLIC_` Supabase secret. Yahoo access is isolated behind the server-only provider interface in `lib/market-provider.ts` so a licensed provider can replace it later.
+
+More detail is in `UI/docs/` and sample contracts are in `UI/fixtures/`.
