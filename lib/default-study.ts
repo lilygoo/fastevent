@@ -1,4 +1,5 @@
 import type { StudyDefinition } from "@/lib/types";
+import { todayEastern } from "@/lib/dates";
 
 export const INITIAL_STUDY_NAME = "Two ARR debates: SOXX vs QQQ";
 
@@ -9,7 +10,7 @@ export const initialStudy: StudyDefinition = {
   lens: "beta",
   preDays: 5,
   postDays: 36,
-  asOf: "2026-10-09",
+  asOf: todayEastern(),
   priceMode: "eod",
   currentEvent: {
     id: "openai-arr",

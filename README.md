@@ -18,13 +18,14 @@ Without Supabase variables, the app uses an in-memory seeded study library and c
 
 ## Database
 
-Apply `supabase/migrations/202610090001_fastevent.sql` to the existing Supabase project. The migration creates only these service-role-only tables:
+Apply the SQL files in `supabase/migrations/` to the existing Supabase project in filename order. The migrations create only these service-role-only tables:
 
 - `fastevent_prices`
 - `fastevent_price_fetches`
 - `fastevent_quote_cache`
 - `fastevent_betas`
 - `fastevent_studies`
+- `fastevent_study_results`
 
 No Price Tracker or Risk Lens table is referenced. FastEvent price rows are retained indefinitely in v1.
 
@@ -44,6 +45,8 @@ The command inserts or updates the approved ARR study and is safe to rerun. It d
 - A cached beta is fresh through exactly 30 calendar days; it refreshes only on study creation or saved-study load.
 - A failed refresh falls back to an older beta with a warning. With no beta, raw and excess inputs remain available and beta-adjusted values are null.
 - A non-trading Day 0 maps to the next joint instrument/benchmark session.
+- Every saved-study run persists raw, excess, and beta-adjusted event paths together in `fastevent_study_results`; changing the displayed lens does not require a market-data refresh.
+- The current study defaults its as-of date to today in U.S. Eastern time and warns when the latest joint price is older.
 
 ## API
 

@@ -78,12 +78,34 @@ test("raw, excess, and beta-adjusted paths use cumulative adjusted-close returns
   };
 
   definition.lens = "raw";
-  assert.ok(Math.abs(alignEventSeries(definition, definition.currentEvent, rows, beta, true).points.at(-1)!.value! - 10) < 1e-10);
+  const allReturns = alignEventSeries(definition, definition.currentEvent, rows, beta, true).points.at(-1)!;
+  assert.ok(Math.abs(allReturns.rawReturn - 10) < 1e-10);
+  assert.ok(Math.abs(allReturns.excessReturn - 8) < 1e-10);
+  assert.ok(Math.abs(allReturns.betaAdjustedReturn! - 6) < 1e-10);
+  assert.ok(Math.abs(allReturns.value! - 10) < 1e-10);
   definition.lens = "excess";
   assert.ok(Math.abs(alignEventSeries(definition, definition.currentEvent, rows, beta, true).points.at(-1)!.value! - 8) < 1e-10);
   definition.lens = "beta";
   assert.ok(Math.abs(alignEventSeries(definition, definition.currentEvent, rows, beta, true).points.at(-1)!.value! - 6) < 1e-10);
   assert.equal(alignEventSeries(definition, definition.currentEvent, rows, null, true).points.at(-1)?.value, null);
+});
+
+test("all return lenses are available from one aligned series", () => {
+  const rows = weekdayRows("2026-08-10", 60);
+  const definition = structuredClone(initialStudy);
+  definition.asOf = "2026-10-09";
+  const beta: BetaReading = {
+    instrument: "SOXX", benchmark: "QQQ", beta: 2, asOfDate: "2026-10-01",
+    alignedObservations: 200, coverageRatio: 1, calculationVersion: "v1",
+    calculatedAt: "2026-10-01T00:00:00Z", stale: false,
+  };
+  const historical = alignEventSeries(definition, definition.historicalEvents[0], rows, beta, false);
+  const series = [historical];
+  assert.ok(calculateDistribution(series, "raw").length > 0);
+  assert.ok(calculateDistribution(series, "excess").length > 0);
+  assert.ok(calculateDistribution(series, "beta").length > 0);
+  assert.notDeepEqual(calculateOutcomes(series, "raw"), calculateOutcomes(series, "excess"));
+  assert.notDeepEqual(calculateOutcomes(series, "excess"), calculateOutcomes(series, "beta"));
 });
 
 test("beta rejects inadequate observations and inadequate benchmark coverage", () => {

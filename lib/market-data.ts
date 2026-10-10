@@ -1,6 +1,7 @@
 import "server-only";
 import { calculateBeta } from "@/lib/calculations";
 import { betaCacheAction, betaRefreshFailure, isBetaStale } from "@/lib/beta-policy";
+import { todayEastern } from "@/lib/dates";
 import { marketDataProvider } from "@/lib/market-provider";
 import { isQuoteFresh } from "@/lib/quote-policy";
 import { getAdminClient } from "@/lib/supabase";
@@ -14,17 +15,6 @@ function isoDate(date: Date) {
 
 function dateOffset(value: string, days: number) {
   return isoDate(new Date(Date.parse(`${value}T00:00:00Z`) + days * DAY_MS));
-}
-
-function todayNewYork() {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function mapPrice(row: Record<string, unknown>): PriceRow {
@@ -160,7 +150,7 @@ export async function resolveBeta(definition: StudyDefinition, checkBeta: boolea
   if (cacheAction === "reuse") return { beta: existing, warnings };
   if (cacheAction === "unavailable") return { beta: null, warnings: ["No cached beta is available. Load or create the study to calculate it."] };
 
-  const asOfRequest = todayNewYork();
+  const asOfRequest = todayEastern();
   const start = dateOffset(asOfRequest, -380);
   try {
     const coverage = await ensurePriceCoverage([definition.instrument, definition.benchmark], start, asOfRequest);

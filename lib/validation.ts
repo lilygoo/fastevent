@@ -88,6 +88,12 @@ export const runRequestSchema = z.object({
   definition: studyDefinitionSchema,
   checkBeta: z.boolean().default(false),
   includeLatest: z.boolean().default(false),
+  studyId: z.string().uuid().optional(),
+  studyRevision: z.number().int().positive().optional(),
+}).superRefine((request, context) => {
+  if (Boolean(request.studyId) !== Boolean(request.studyRevision)) {
+    context.addIssue({ code: "custom", path: ["studyId"], message: "Study ID and revision must be supplied together." });
+  }
 });
 
 export const createStudySchema = z.object({ definition: studyDefinitionSchema });

@@ -17,6 +17,7 @@ test("study validation enforces symbol separation, bounds, and milestone orderin
   assert.equal(studyDefinitionSchema.safeParse(earlyMilestone).success, false);
 
   const futureMilestone = structuredClone(initialStudy);
+  futureMilestone.asOf = "2026-10-09";
   futureMilestone.currentEvent.milestones[0].date = "2026-10-10";
   assert.equal(studyDefinitionSchema.safeParse(futureMilestone).success, false);
 });

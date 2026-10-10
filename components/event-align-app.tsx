@@ -5,8 +5,9 @@ import {
   BarChart3, BookOpen, CalendarDays, ChevronDown, Download, LoaderCircle, Plus,
   Eye, EyeOff, RefreshCw, Save, Trash2, X,
 } from "lucide-react";
+import { todayEastern } from "@/lib/dates";
 import { initialStudy } from "@/lib/default-study";
-import { BENCHMARKS, INSTRUMENTS, type EventSeries, type EventStudyResponse, type SavedStudy, type StudyDefinition } from "@/lib/types";
+import { BENCHMARKS, INSTRUMENTS, type AlignedPoint, type EventSeries, type EventStudyResponse, type ReturnLens, type SavedStudy, type StudyDefinition } from "@/lib/types";
 
 const COLORS = ["#2f6db0", "#7e9fc3", "#7b61a8", "#c27c5a", "#3e8f8b"];
 const CURRENT_SERIES_COLOR = "#46a57b";
@@ -28,9 +29,9 @@ const TUTORIAL_FLOWS: Record<TutorialFlowKey, { name: string; duration: string; 
     steps: [
       { target: "#newStudyButton", title: "Start with New study", copy: "This resets the editor to a blank working study. Your saved studies remain untouched.", hint: "Use New study when you want a separate setup rather than editing the currently loaded source." },
       { target: "#studySetupSection", title: "Define what to compare", copy: "Name the study, choose a different instrument and benchmark, select the return lens, and set the pre- and post-event windows.", hint: "Beta-adjusted uses the cached current pair beta; Raw and Excess remain available if beta cannot be calculated." },
-      { target: "#currentEventSection", title: "Enter the current event", copy: "Give the current event a clear label, choose its requested Day 0, and set the as-of date. Milestones can belong to the current event too.", hint: "A non-trading Day 0 maps forward to the next joint instrument and benchmark session." },
+      { target: "#currentEventSection", title: "Enter the current event", copy: "Give the current event a clear label and choose its requested Day 0. As of defaults to today's U.S. Eastern date, and milestones can belong to the current event too.", hint: "A non-trading Day 0 maps forward to the next joint session. If today's joint price is unavailable, FastEvent shows the latest prior price with its date and a stale warning." },
       { target: "#pastEventsSection", title: "Add comparable past events", copy: "Each historical episode needs a name and Day 0. Add milestones when a follow-up date should appear as an annotation on the chart.", hint: "Use events with the same economic catalyst when you want the historical distribution to be meaningful." },
-      { target: "#runStudyButton", title: "Load the study data", copy: "FastEvent fills its independent adjusted-close cache, aligns joint sessions, and calculates the selected return lens.", hint: "Latest prices are never polled. Choose Latest and use Pull latest when you explicitly want a delayed quote." },
+      { target: "#runStudyButton", title: "Load the study data", copy: "FastEvent fills its independent adjusted-close cache, aligns joint sessions, and calculates raw, excess, and beta-adjusted returns together.", hint: "Saved studies persist the complete three-lens result snapshot. Latest prices are never polled; choose Latest and use Pull latest for a delayed quote." },
       { target: "#chartPanel", title: "Read the aligned result", copy: "Every path is normalized to zero at its effective Day 0. Overlay shows individual episodes; Range emphasizes the historical median and interquartile band.", hint: "The dark EVENT D0 line is the alignment anchor. Milestones inherit their episode color, while the green latest-point guide marks the current event's newest EOD or explicitly pulled quote." },
     ],
   },
@@ -63,6 +64,25 @@ function shortDate(value: string) {
 
 function relativeDayLabel(day: number) {
   return day === 0 ? "D0" : day > 0 ? `D+${day}` : `D${day}`;
+}
+
+function pointReturn(point: AlignedPoint, lens: ReturnLens) {
+  return lens === "raw" ? point.rawReturn : lens === "excess" ? point.excessReturn : point.betaAdjustedReturn;
+}
+
+function withTodayAsOf(source: StudyDefinition) {
+  const next = clone(source);
+  const today = todayEastern();
+  next.asOf = today < next.currentEvent.day0 ? next.currentEvent.day0 : today;
+  return next;
+}
+
+function niceTickStep(range: number, targetTicks = 5) {
+  const rough = Math.max(range, 0.001) / targetTicks;
+  const magnitude = 10 ** Math.floor(Math.log10(rough));
+  const normalized = rough / magnitude;
+  const multiplier = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 2.5 ? 2.5 : normalized <= 5 ? 5 : 10;
+  return multiplier * magnitude;
 }
 
 function updateEvent(definition: StudyDefinition, current: boolean, eventIndex: number, field: "label" | "day0", value: string) {
@@ -121,28 +141,42 @@ function EventChart({ result, definition }: { result: EventStudyResponse; defini
     left: horizontalMargin.left,
   };
   const height = margin.top + plotHeight + margin.bottom;
-  const values = visibleSeries.flatMap((series) => series.points.flatMap((point) => point.value === null ? [] : [point.value]));
-  result.distribution.forEach((point) => values.push(point.q1, point.q3));
-  const minValue = values.length ? Math.min(...values) : -1;
-  const maxValue = values.length ? Math.max(...values) : 1;
+  const selectedDistribution = result.distributions?.[definition.lens] ?? result.distribution;
+  const values = visibleSeries.flatMap((series) => series.points.flatMap((point) => {
+    const value = pointReturn(point, definition.lens);
+    return value === null ? [] : [value];
+  }));
+  selectedDistribution.forEach((point) => values.push(point.q1, point.q3));
+  const minValue = values.length ? Math.min(0, ...values) : -1;
+  const maxValue = values.length ? Math.max(0, ...values) : 1;
   const pad = Math.max(1, (maxValue - minValue) * 0.14);
-  const yMin = Math.floor((minValue - pad) * 2) / 2;
-  const yMax = Math.ceil((maxValue + pad) * 2) / 2;
+  const tickStep = niceTickStep(maxValue - minValue + pad * 2);
+  let yMin = Math.floor((minValue - pad) / tickStep) * tickStep;
+  let yMax = Math.ceil((maxValue + pad) / tickStep) * tickStep;
+  if (yMin === yMax) { yMin -= tickStep; yMax += tickStep; }
   const y = (value: number) => margin.top + ((yMax - value) / Math.max(0.001, yMax - yMin)) * (height - margin.top - margin.bottom);
-  const path = (series: EventSeries) => series.points.filter((point) => point.value !== null).map((point, index) => `${index ? "L" : "M"}${x(point.day).toFixed(1)},${y(point.value!).toFixed(1)}`).join(" ");
-  const ticks = Array.from({ length: 6 }, (_, index) => yMin + (index / 5) * (yMax - yMin));
+  const path = (series: EventSeries) => series.points.flatMap((point) => {
+    const value = pointReturn(point, definition.lens);
+    return value === null ? [] : [{ day: point.day, value }];
+  }).map((point, index) => `${index ? "L" : "M"}${x(point.day).toFixed(1)},${y(point.value).toFixed(1)}`).join(" ");
+  const tickCount = Math.round((yMax - yMin) / tickStep);
+  const ticks = Array.from({ length: tickCount + 1 }, (_, index) => {
+    const value = yMin + index * tickStep;
+    return Math.abs(value) < tickStep / 1000 ? 0 : value;
+  });
   const xTicks = Array.from({ length: Math.floor((maxDay - minDay) / 6) + 1 }, (_, index) => minDay + index * 6).filter((day) => day <= maxDay);
   if (!xTicks.includes(0)) xTicks.push(0);
   xTicks.sort((a, b) => a - b);
   const activeHistorical = visibleSeries.filter((series) => !series.current);
-  const band = result.distribution.filter((point) => point.day >= minDay && point.day <= maxDay);
+  const band = selectedDistribution.filter((point) => point.day >= minDay && point.day <= maxDay);
   const bandPath = band.length
     ? `${band.map((point, index) => `${index ? "L" : "M"}${x(point.day)},${y(point.q3)}`).join(" ")} ${[...band].reverse().map((point) => `L${x(point.day)},${y(point.q1)}`).join(" ")} Z`
     : "";
   const currentSeries = visibleSeries.find((series) => series.current);
-  const latestPoint = currentSeries?.points.findLast((point) => point.value !== null && point.day >= minDay && point.day <= maxDay) ?? null;
+  const latestPoint = currentSeries?.points.findLast((point) => pointReturn(point, definition.lens) !== null && point.day >= minDay && point.day <= maxDay) ?? null;
+  const latestValue = latestPoint ? pointReturn(latestPoint, definition.lens) : null;
   const latestX = latestPoint ? x(latestPoint.day) : 0;
-  const latestY = latestPoint?.value === null || latestPoint === null ? 0 : y(latestPoint.value);
+  const latestY = latestValue === null ? 0 : y(latestValue);
   const latestBadgeWidth = 88;
   const latestBadgeX = Math.max(margin.left + 3, Math.min(latestX - latestBadgeWidth / 2, width - margin.right - latestBadgeWidth - 3));
   const valueLabelOnRight = latestX < width - margin.right - 74;
@@ -152,8 +186,8 @@ function EventChart({ result, definition }: { result: EventStudyResponse; defini
     <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Aligned event performance chart">
       <rect x={margin.left} y={margin.top} width={width - margin.left - margin.right} height={height - margin.top - margin.bottom} fill="#fff" />
       {ticks.map((tick) => <g key={tick}>
-        <line x1={margin.left} x2={width - margin.right} y1={y(tick)} y2={y(tick)} stroke="#e8edf3" />
-        <text x={margin.left - 10} y={y(tick) + 4} textAnchor="end" className="axis-label">{tick.toFixed(1)}%</text>
+        <line x1={margin.left} x2={width - margin.right} y1={y(tick)} y2={y(tick)} stroke={tick === 0 ? "#aebdcd" : "#e8edf3"} strokeWidth={tick === 0 ? "1.5" : "1"} />
+        <text x={margin.left - 10} y={y(tick) + 4} textAnchor="end" className={tick === 0 ? "axis-label zero-axis-label" : "axis-label"}>{tick === 0 ? "0.0% · D0" : `${tick.toFixed(1)}%`}</text>
       </g>)}
       {xTicks.map((tick) => <g key={tick}>
         {tick !== 0 && <line x1={x(tick)} x2={x(tick)} y1={margin.top} y2={height - margin.bottom} stroke="#f0f3f6" />}
@@ -177,10 +211,10 @@ function EventChart({ result, definition }: { result: EventStudyResponse; defini
       </g>}
       {definition.display.view === "overlay" && activeHistorical.map((series) => <path key={series.eventId} d={path(series)} fill="none" stroke={seriesColor(series, result.series)} strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"><title>{series.label}</title></path>)}
       {visibleSeries.filter((series) => series.current).map((series) => <path key={series.eventId} d={path(series)} fill="none" stroke={CURRENT_SERIES_COLOR} strokeWidth="2.8" strokeDasharray="7 4" strokeLinecap="round" strokeLinejoin="round"><title>{series.label}</title></path>)}
-      {latestPoint && latestPoint.value !== null && <g className="latest-point-marker">
-        <title>Latest {result.priceStatus === "latest" ? "intraday" : "EOD"} point: {relativeDayLabel(latestPoint.day)}, {pct(latestPoint.value)}</title>
+      {latestPoint && latestValue !== null && <g className="latest-point-marker">
+        <title>Latest {result.priceStatus === "latest" ? "intraday" : "EOD"} point: {relativeDayLabel(latestPoint.day)}, {pct(latestValue)}</title>
         <circle cx={latestX} cy={latestY} r="6" />
-        <text x={latestX + (valueLabelOnRight ? 10 : -10)} y={valueLabelY} textAnchor={valueLabelOnRight ? "start" : "end"}>{pct(latestPoint.value)}</text>
+        <text x={latestX + (valueLabelOnRight ? 10 : -10)} y={valueLabelY} textAnchor={valueLabelOnRight ? "start" : "end"}>{pct(latestValue)}</text>
       </g>}
       <text x={margin.left} y={margin.top - 12} className="axis-title">Cumulative return</text>
       <text x={width - margin.right} y={height - 4} textAnchor="end" className="axis-title">Trading days from event</text>
@@ -189,7 +223,7 @@ function EventChart({ result, definition }: { result: EventStudyResponse; defini
 }
 
 export function EventAlignApp() {
-  const [definition, setDefinition] = useState<StudyDefinition>(() => clone(initialStudy));
+  const [definition, setDefinition] = useState<StudyDefinition>(() => withTodayAsOf(initialStudy));
   const [studies, setStudies] = useState<SavedStudy[]>([]);
   const [activeStudy, setActiveStudy] = useState<SavedStudy | null>(null);
   const [result, setResult] = useState<EventStudyResponse | null>(null);
@@ -230,12 +264,17 @@ export function EventAlignApp() {
     };
   }, [tutorial]);
 
-  async function runStudy(next = definition, checkBeta = false, includeLatest = false) {
+  async function runStudy(next = definition, checkBeta = false, includeLatest = false, study = activeStudy) {
     setBusy(true); setError(null); setNotice(null);
     try {
       const response = await fetch("/api/event-studies/run", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ definition: next, checkBeta, includeLatest }),
+        body: JSON.stringify({
+          definition: next,
+          checkBeta,
+          includeLatest,
+          ...(study ? { studyId: study.id, studyRevision: study.revision } : {}),
+        }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Unable to run study.");
@@ -254,8 +293,9 @@ export function EventAlignApp() {
     setStudies(payload.studies);
     if (runFirst && payload.studies.length) {
       const first = payload.studies.find((study: SavedStudy) => study.name === initialStudy.name) ?? payload.studies[0];
-      setActiveStudy(first); setDefinition(first.definition);
-      await runStudy(first.definition, true, false);
+      const currentDefinition = withTodayAsOf(first.definition);
+      setActiveStudy(first); setDefinition(currentDefinition);
+      await runStudy(currentDefinition, true, false, first);
     }
   }
 
@@ -271,17 +311,19 @@ export function EventAlignApp() {
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Unable to save study.");
-      setActiveStudy(payload.study);
+      const savedStudy = payload.study as SavedStudy;
+      setActiveStudy(savedStudy);
       setNotice(activeStudy ? "Study updated." : "Study saved. Beta checked for this new study.");
       await refreshLibrary(false);
-      if (!activeStudy) await runStudy(definition, true, false);
+      await runStudy(definition, !activeStudy, false, savedStudy);
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setBusy(false); }
   }
 
   async function loadStudy(study: SavedStudy) {
-    setActiveStudy(study); setDefinition(clone(study.definition)); setModal(null);
-    await runStudy(study.definition, true, false);
+    const currentDefinition = withTodayAsOf(study.definition);
+    setActiveStudy(study); setDefinition(currentDefinition); setModal(null);
+    await runStudy(currentDefinition, true, false, study);
   }
 
   async function removeStudy(study: SavedStudy) {
@@ -294,7 +336,7 @@ export function EventAlignApp() {
   }
 
   function newStudy() {
-    const next = clone(initialStudy);
+    const next = withTodayAsOf(initialStudy);
     next.name = "Untitled event study";
     next.currentEvent = { id: crypto.randomUUID(), label: "Current event", day0: next.currentEvent.day0, active: true, milestones: [] };
     next.historicalEvents = [{ id: crypto.randomUUID(), label: "Past event", day0: next.historicalEvents[0].day0, active: true, milestones: [] }];
@@ -305,7 +347,10 @@ export function EventAlignApp() {
     if (!result) return;
     const days = [...new Set(result.series.flatMap((series) => series.points.map((point) => point.day)))].sort((a, b) => a - b);
     const lines = [["relative_day", ...result.series.map((series) => series.label)].join(",")];
-    for (const day of days) lines.push([day, ...result.series.map((series) => series.points.find((point) => point.day === day)?.value ?? "")].map((value) => `"${String(value).replaceAll('"', '""')}"`).join(","));
+    for (const day of days) lines.push([day, ...result.series.map((series) => {
+      const point = series.points.find((item) => item.day === day);
+      return point ? pointReturn(point, definition.lens) ?? "" : "";
+    })].map((value) => `"${String(value).replaceAll('"', '""')}"`).join(","));
     const url = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
     const anchor = document.createElement("a"); anchor.href = url; anchor.download = "event-aligned-returns.csv"; anchor.click(); URL.revokeObjectURL(url);
   }
@@ -313,6 +358,7 @@ export function EventAlignApp() {
   const visibleMilestoneKeys = activeMilestoneKeys(definition);
   const allMilestones = result?.series.flatMap((series) => series.milestones).filter((item) => visibleMilestoneKeys.has(`${item.eventId}:${item.id}`)) ?? [];
   const milestoneColors = new Map(result?.series.map((series) => [series.eventId, seriesColor(series, result.series)]));
+  const displayedOutcomes = result?.outcomesByLens?.[definition.lens] ?? result?.outcomes ?? [];
   const betaDisabled = Boolean(
     result
     && result.definition.instrument === definition.instrument
@@ -379,7 +425,7 @@ export function EventAlignApp() {
       <section className="content">
         <div className="page-head">
           <div><span className="eyebrow">Aligned event study</span><h1>{definition.name}: {definition.instrument} vs {definition.benchmark}</h1><p>{definition.lens === "beta" ? "β-adjusted" : definition.lens === "excess" ? "Benchmark-relative" : "Raw"} cumulative return, normalized to 0 at each event&apos;s Day 0</p></div>
-          <div className="meta">{result ? <>Latest point: {shortDate(result.dataAsOf)} · <strong>{result.priceStatus.toUpperCase()}</strong>{result.beta && <span>β {result.beta.beta.toFixed(2)} · calculated {shortDate(result.beta.calculatedAt.slice(0, 10))}</span>}</> : "Awaiting data"}</div>
+          <div className="meta">{result ? <>Price date: {shortDate(result.dataAsOf)} · <strong>{result.priceStatus.toUpperCase()}</strong>{result.priceStale && <b className="stale-badge">Stale price</b>}{result.beta && <span>β {result.beta.beta.toFixed(2)} · calculated {shortDate(result.beta.calculatedAt.slice(0, 10))}</span>}</> : "Awaiting data"}</div>
         </div>
         {error && <div className="alert error">{error}</div>}
         {notice && <div className="alert notice">{notice}</div>}
@@ -396,7 +442,7 @@ export function EventAlignApp() {
           <article className="panel"><div className="panel-head"><div><h2>Visible milestones</h2><p>Annotations owned by current and historical events.</p></div></div><div className="definition-list">{allMilestones.length ? allMilestones.map((milestone) => <div key={`${milestone.eventId}-${milestone.id}`}><span className="milestone-dot" style={{ background: milestoneColors.get(milestone.eventId) }} /><span><strong>{shortDate(milestone.effectiveDate)} · {relativeDayLabel(milestone.day)}</strong>{milestone.label}<small>{milestone.eventLabel}</small></span></div>) : <p className="quiet">No visible milestones.</p>}</div></article>
         </div>}
 
-        {result && <article className="panel results-panel"><div className="panel-head"><div><h2>Outcome comparison</h2><p>Percentage points from each event&apos;s effective Day 0.</p></div></div><div className="table-scroll"><table><thead><tr><th>Event</th><th>Day 0</th><th>D+1</th><th>D+5</th><th>D+20</th><th>Worst drawdown</th></tr></thead><tbody>{result.outcomes.map((row) => <tr key={row.eventId}><td>{row.label}{row.current && <em>Current</em>}</td><td>{shortDate(row.effectiveDay0)}</td><td>{pct(row.day1)}</td><td>{pct(row.day5)}</td><td>{pct(row.day20)}</td><td>{pct(row.worstDrawdown)}</td></tr>)}</tbody></table></div></article>}
+        {result && <article className="panel results-panel"><div className="panel-head"><div><h2>Outcome comparison</h2><p>Percentage points from each event&apos;s effective Day 0.</p></div></div><div className="table-scroll"><table><thead><tr><th>Event</th><th>Day 0</th><th>D+1</th><th>D+5</th><th>D+20</th><th>Worst drawdown</th></tr></thead><tbody>{displayedOutcomes.map((row) => <tr key={row.eventId}><td>{row.label}{row.current && <em>Current</em>}</td><td>{shortDate(row.effectiveDay0)}</td><td>{pct(row.day1)}</td><td>{pct(row.day5)}</td><td>{pct(row.day20)}</td><td>{pct(row.worstDrawdown)}</td></tr>)}</tbody></table></div></article>}
       </section>
     </div>
 

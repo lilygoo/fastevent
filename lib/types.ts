@@ -84,6 +84,8 @@ export type AlignedPoint = {
   value: number | null;
   rawReturn: number;
   benchmarkReturn: number;
+  excessReturn: number;
+  betaAdjustedReturn: number | null;
 };
 
 export type AlignedMilestone = Milestone & {
@@ -128,8 +130,11 @@ export type EventStudyResponse = {
   betaAvailable: boolean;
   series: EventSeries[];
   distribution: DistributionPoint[];
+  distributions: Record<ReturnLens, DistributionPoint[]>;
   outcomes: OutcomeRow[];
+  outcomesByLens: Record<ReturnLens, OutcomeRow[]>;
   dataAsOf: string;
+  priceStale: boolean;
   priceStatus: "eod" | "latest";
   quoteAsOf: string | null;
   provenance: {

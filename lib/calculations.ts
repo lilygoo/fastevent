@@ -6,6 +6,7 @@ import type {
   PriceRow,
   StudyDefinition,
   StudyEvent,
+  ReturnLens,
 } from "@/lib/types";
 
 const DAY_MS = 86_400_000;
@@ -128,14 +129,10 @@ export function alignEventSeries(
     const day = startIndex + offset - day0Index;
     const rawReturn = (instrumentRows.get(date)!.adjustedClose / instrumentBase - 1) * 100;
     const benchmarkReturn = (benchmarkRows.get(date)!.adjustedClose / benchmarkBase - 1) * 100;
-    const value = definition.lens === "raw"
-      ? rawReturn
-      : definition.lens === "excess"
-        ? rawReturn - benchmarkReturn
-        : beta
-          ? rawReturn - beta.beta * benchmarkReturn
-          : null;
-    return { day, date, value, rawReturn, benchmarkReturn };
+    const excessReturn = rawReturn - benchmarkReturn;
+    const betaAdjustedReturn = beta ? rawReturn - beta.beta * benchmarkReturn : null;
+    const value = definition.lens === "raw" ? rawReturn : definition.lens === "excess" ? excessReturn : betaAdjustedReturn;
+    return { day, date, value, rawReturn, benchmarkReturn, excessReturn, betaAdjustedReturn };
   });
   return {
     eventId: event.id,
@@ -149,13 +146,18 @@ export function alignEventSeries(
   };
 }
 
-export function calculateDistribution(series: EventSeries[]): DistributionPoint[] {
+export function pointReturn(point: EventSeries["points"][number], lens: ReturnLens) {
+  return lens === "raw" ? point.rawReturn : lens === "excess" ? point.excessReturn : point.betaAdjustedReturn;
+}
+
+export function calculateDistribution(series: EventSeries[], lens: ReturnLens = "raw"): DistributionPoint[] {
   const valuesByDay = new Map<number, number[]>();
   for (const event of series.filter((item) => !item.current && item.active)) {
     for (const point of event.points) {
-      if (point.value === null) continue;
+      const value = pointReturn(point, lens);
+      if (value === null) continue;
       if (!valuesByDay.has(point.day)) valuesByDay.set(point.day, []);
-      valuesByDay.get(point.day)!.push(point.value);
+      valuesByDay.get(point.day)!.push(value);
     }
   }
   return [...valuesByDay.entries()].sort(([a], [b]) => a - b).map(([day, values]) => ({
@@ -166,23 +168,25 @@ export function calculateDistribution(series: EventSeries[]): DistributionPoint[
   }));
 }
 
-function pointAt(series: EventSeries, day: number) {
-  return series.points.find((point) => point.day === day)?.value ?? null;
+function pointAt(series: EventSeries, day: number, lens: ReturnLens) {
+  const point = series.points.find((item) => item.day === day);
+  return point ? pointReturn(point, lens) : null;
 }
 
-export function calculateOutcomes(series: EventSeries[]): OutcomeRow[] {
+export function calculateOutcomes(series: EventSeries[], lens: ReturnLens = "raw"): OutcomeRow[] {
   return series.map((event) => {
     const afterDay0 = event.points
-      .filter((point) => point.day >= 0 && point.value !== null)
-      .map((point) => point.value as number);
+      .filter((point) => point.day >= 0)
+      .map((point) => pointReturn(point, lens))
+      .filter((value): value is number => value !== null);
     return {
       eventId: event.eventId,
       label: event.label,
       effectiveDay0: event.effectiveDay0,
       current: event.current,
-      day1: pointAt(event, 1),
-      day5: pointAt(event, 5),
-      day20: pointAt(event, 20),
+      day1: pointAt(event, 1, lens),
+      day5: pointAt(event, 5, lens),
+      day20: pointAt(event, 20, lens),
       worstDrawdown: afterDay0.length ? Math.min(...afterDay0) : null,
     };
   });

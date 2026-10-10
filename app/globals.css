@@ -80,6 +80,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .meta { padding-top: 9px; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; color: #68758a; font-size: 10px; white-space: nowrap; }
 .meta strong { margin-left: 3px; color: #3c4d63; }
 .meta span { color: #385d86; font-weight: 700; }
+.meta .stale-badge { padding: 2px 6px; border-radius: 99px; color: #9a3412; background: #ffedd5; font-size: 8px; letter-spacing: .035em; text-transform: uppercase; }
 .alert { margin-bottom: 12px; padding: 10px 13px; border-radius: 8px; font-size: 11px; }
 .alert.error { color: #8d241d; border: 1px solid #f2c8c4; background: #fff2f0; }
 .alert.notice { color: #5c4c1e; border: 1px solid #eadcae; background: #fffbed; }
@@ -95,6 +96,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .chart-wrap { width: 100%; padding: 2px 12px 8px; overflow-x: auto; }
 .chart-wrap svg { width: 100%; min-width: 680px; height: auto; display: block; }
 .axis-label { fill: #748094; font-size: 10px; }
+.zero-axis-label { fill: #3f536b; font-weight: 800; }
 .axis-title { fill: #64748b; font-size: 10px; font-weight: 650; }
 .milestone-label { fill: #617287; font-size: 8.5px; font-weight: 650; paint-order: stroke; stroke: white; stroke-width: 3px; }
 .day-zero-marker line { stroke: #173f6b; stroke-width: 2.4; }
