@@ -5,30 +5,50 @@ on:
     - cron: "0 23 * * 1-5"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: fastevent-daily-refresh
+  cancel-in-progress: false
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - name: Refresh active studies serially
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate worker configuration
         env:
-          JOB_URL: ${{ secrets.FASTEVENT_JOB_URL }}
-          JOB_SECRET: ${{ secrets.FASTEVENT_JOB_SECRET }}
-          VERCEL_BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
         run: |
-          cursor=""
-          failures=0
-          while true; do
-            url="$JOB_URL"
-            if [ -n "$cursor" ]; then url="$JOB_URL?after=$cursor"; fi
-            response=$(curl --fail-with-body --silent --show-error --request POST \
-              --header "Authorization: Bearer $JOB_SECRET" \
-              --header "x-vercel-protection-bypass: $VERCEL_BYPASS" \
-              "$url")
-            if [ "$(jq -r '.done' <<<"$response")" = "true" ]; then break; fi
-            if [ "$(jq -r '.ok' <<<"$response")" != "true" ]; then
-              failures=$((failures + 1))
-              jq -r '"Study " + (.studyId // "unknown") + " failed: " + (.error // "unknown error")' <<<"$response"
-            fi
-            cursor=$(jq -r '.nextCursor' <<<"$response")
-          done
-          if [ "$failures" -gt 0 ]; then exit 1; fi
+          if [ -z "$SUPABASE_URL" ]; then
+            echo "::error::Missing GitHub Actions secret SUPABASE_URL"
+            exit 1
+          fi
+          if [ -z "$SUPABASE_SECRET_KEY" ]; then
+            echo "::error::Missing GitHub Actions secret SUPABASE_SECRET_KEY"
+            exit 1
+          fi
+
+      - name: Refresh active studies directly
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          MARKET_DATA_PROVIDER: yahoo
+          FASTEVENT_PRICE_CACHE_HOURS: 24
+          FASTEVENT_QUOTE_CACHE_SECONDS: 60
+          FASTEVENT_CALCULATION_VERSION: v2-daily-car
+        run: npm run daily-refresh

@@ -42,3 +42,14 @@ test("new application code does not read or write legacy beta or result tables",
   assert.doesNotMatch(sources, /fastevent_betas/);
   assert.doesNotMatch(sources, /fastevent_study_results/);
 });
+
+test("the scheduled worker runs directly in GitHub without calling Vercel", () => {
+  const workflow = fs.readFileSync(".github/workflows/fastevent-daily-refresh.yml", "utf8");
+  assert.match(workflow, /actions\/checkout@v4/);
+  assert.match(workflow, /SUPABASE_URL:.*secrets\.SUPABASE_URL/);
+  assert.match(workflow, /SUPABASE_SECRET_KEY:.*secrets\.SUPABASE_SECRET_KEY/);
+  assert.match(workflow, /run: npm run daily-refresh/);
+  assert.match(workflow, /cancel-in-progress: false/);
+  assert.doesNotMatch(workflow, /curl|FASTEVENT_JOB_URL|FASTEVENT_JOB_SECRET|VERCEL_AUTOMATION_BYPASS_SECRET/);
+  assert.equal(fs.existsSync("app/api/jobs/daily-refresh/route.ts"), false);
+});

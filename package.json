@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --conditions=react-server --import tsx --test tests/**/*.test.ts",
     "bootstrap": "node --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/bootstrap.ts",
-    "recalculate-runs": "node --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/recalculate-runs.ts"
+    "recalculate-runs": "node --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/recalculate-runs.ts",
+    "daily-refresh": "node --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/daily-refresh.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.95.3",

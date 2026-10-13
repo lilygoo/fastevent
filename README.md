@@ -33,7 +33,7 @@ The legacy `fastevent_betas` and `fastevent_study_results` tables remain for one
 
 No Price Tracker or Risk Lens table is referenced. FastEvent price rows are retained indefinitely in v1.
 
-Set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` only in the server environment, then seed the shared study:
+Set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` only in trusted server environments (Vercel and the protected GitHub Actions secret store), then seed the shared study:
 
 ```bash
 npm run bootstrap
@@ -62,7 +62,6 @@ The command inserts or updates the approved ARR study and is safe to rerun. It d
 - `POST /api/market-data/quote`
 - `GET/POST /api/studies`
 - `GET/PATCH/DELETE /api/studies/[id]`
-- `POST /api/jobs/daily-refresh` (Bearer `FASTEVENT_JOB_SECRET`)
 
 Updates and deletes require the current `revision`; stale writes receive HTTP 409.
 
@@ -79,10 +78,19 @@ npm run build
 1. Import this repository as a Vercel Next.js project.
 2. Add `SUPABASE_URL` and `SUPABASE_SECRET_KEY` as encrypted server environment variables for each intended environment.
 3. Add the optional cache/version variables from `.env.example` if the defaults should be overridden.
-4. Set `FASTEVENT_JOB_SECRET` in Vercel.
-5. In Vercel project settings, enable Deployment Protection / Vercel Authentication for production and preview deployments.
-6. Apply all Supabase migrations, deploy, and run `npm run bootstrap` followed by `npm run recalculate-runs` with production environment variables.
-7. In GitHub Actions, set `FASTEVENT_JOB_URL` to the deployed `/api/jobs/daily-refresh` URL, `FASTEVENT_JOB_SECRET` to the same job secret, and `VERCEL_AUTOMATION_BYPASS_SECRET` to a Vercel protection-bypass secret. The workflow runs weekdays at 23:00 UTC and can also be started manually.
+4. In Vercel project settings, enable Deployment Protection / Vercel Authentication for production and preview deployments.
+5. Apply all Supabase migrations, deploy, and run `npm run bootstrap` followed by `npm run recalculate-runs` with production environment variables.
+
+## Scheduled daily refresh
+
+GitHub Actions runs the refresh code directly; it does not call the Vercel application. Add these encrypted repository secrets in GitHub:
+
+- `SUPABASE_URL`
+- `SUPABASE_SECRET_KEY`
+
+The workflow checks out the repository, installs its locked dependencies, fetches finalized EOD data from the configured provider, and writes FastEvent-owned prices and normalized runs directly to Supabase. Runs are serialized and one failing study does not prevent later studies from being attempted; the workflow finishes unsuccessfully if any study failed.
+
+The workflow runs weekdays at 23:00 UTC and can also be started manually. `FASTEVENT_JOB_URL`, `FASTEVENT_JOB_SECRET`, and `VERCEL_AUTOMATION_BYPASS_SECRET` are not used by this architecture.
 
 Do not create a `NEXT_PUBLIC_` Supabase secret. Yahoo access is isolated behind the server-only provider interface in `lib/market-provider.ts` so a licensed provider can replace it later.
 
