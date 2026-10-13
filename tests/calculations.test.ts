@@ -47,7 +47,7 @@ test("event alignment maps a weekend Day 0 to the next joint session", () => {
   const series = alignEventSeries(definition, definition.currentEvent, rows, beta, true);
   assert.equal(series.effectiveDay0, "2026-08-17");
   assert.equal(series.points.find((point) => point.day === 0)?.value, 0);
-  assert.equal(series.points[0].day, -2);
+  assert.ok(series.points[0].day <= -2);
 });
 
 test("distribution and outcomes use available active event values", () => {
@@ -61,7 +61,7 @@ test("distribution and outcomes use available active event values", () => {
   assert.equal(calculateOutcomes([historical, current]).length, 2);
 });
 
-test("raw, excess, and beta-adjusted paths use cumulative adjusted-close returns", () => {
+test("raw and excess use endpoints while one-day beta CAR uses daily abnormal return", () => {
   const rows: PriceRow[] = [
     { symbol: "SOXX", date: "2026-10-07", rawClose: 50, adjustedClose: 100 },
     { symbol: "QQQ", date: "2026-10-07", rawClose: 80, adjustedClose: 200 },
@@ -88,6 +88,30 @@ test("raw, excess, and beta-adjusted paths use cumulative adjusted-close returns
   definition.lens = "beta";
   assert.ok(Math.abs(alignEventSeries(definition, definition.currentEvent, rows, beta, true).points.at(-1)!.value! - 6) < 1e-10);
   assert.equal(alignEventSeries(definition, definition.currentEvent, rows, null, true).points.at(-1)?.value, null);
+});
+
+test("multi-day beta-adjusted CAR sums daily abnormal returns rather than endpoint returns", () => {
+  const rows: PriceRow[] = [
+    { symbol: "SOXX", date: "2026-10-06", rawClose: 100, adjustedClose: 100 },
+    { symbol: "QQQ", date: "2026-10-06", rawClose: 100, adjustedClose: 100 },
+    { symbol: "SOXX", date: "2026-10-07", rawClose: 100, adjustedClose: 100 },
+    { symbol: "QQQ", date: "2026-10-07", rawClose: 100, adjustedClose: 100 },
+    { symbol: "SOXX", date: "2026-10-08", rawClose: 110, adjustedClose: 110 },
+    { symbol: "QQQ", date: "2026-10-08", rawClose: 105, adjustedClose: 105 },
+    { symbol: "SOXX", date: "2026-10-09", rawClose: 99, adjustedClose: 99 },
+    { symbol: "QQQ", date: "2026-10-09", rawClose: 100, adjustedClose: 100 },
+  ];
+  const definition = structuredClone(initialStudy);
+  definition.asOf = "2026-10-09";
+  const beta: BetaReading = {
+    instrument: "SOXX", benchmark: "QQQ", beta: 2, asOfDate: "2026-09-18",
+    alignedObservations: 220, coverageRatio: 1, calculationVersion: "v2-daily-car",
+    calculatedAt: "2026-10-09T00:00:00Z", stale: false,
+  };
+  const point = alignEventSeries(definition, definition.currentEvent, rows, beta, true).points.find((item) => item.day === 2)!;
+  const expectedCar = (0.10 - 2 * 0.05) + (-0.10 - 2 * (100 / 105 - 1));
+  assert.ok(Math.abs(point.betaAdjustedReturn! - expectedCar * 100) < 1e-10);
+  assert.ok(Math.abs(point.betaAdjustedReturn! - (point.rawReturn - 2 * point.benchmarkReturn)) > 0.1);
 });
 
 test("all return lenses are available from one aligned series", () => {

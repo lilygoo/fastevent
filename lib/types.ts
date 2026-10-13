@@ -55,6 +55,8 @@ export type PriceRow = {
   date: string;
   rawClose: number;
   adjustedClose: number;
+  isFinal?: boolean;
+  source?: "eod" | "latest";
 };
 
 export type BetaReading = {
@@ -86,6 +88,12 @@ export type AlignedPoint = {
   benchmarkReturn: number;
   excessReturn: number;
   betaAdjustedReturn: number | null;
+  dailyInstrumentReturn: number | null;
+  dailyBenchmarkReturn: number | null;
+  dailyAbnormalReturn: number | null;
+  instrumentAdjustedPrice: number;
+  benchmarkAdjustedPrice: number;
+  source: "eod" | "latest";
 };
 
 export type AlignedMilestone = Milestone & {
@@ -102,6 +110,7 @@ export type EventSeries = {
   effectiveDay0: string;
   current: boolean;
   active: boolean;
+  beta: BetaReading | null;
   points: AlignedPoint[];
   milestones: AlignedMilestone[];
 };
@@ -128,6 +137,7 @@ export type EventStudyResponse = {
   definition: StudyDefinition;
   beta: BetaReading | null;
   betaAvailable: boolean;
+  betas: Record<string, BetaReading | null>;
   series: EventSeries[];
   distribution: DistributionPoint[];
   distributions: Record<ReturnLens, DistributionPoint[]>;
@@ -147,4 +157,5 @@ export type EventStudyResponse = {
     calculationVersion: string;
   };
   warnings: string[];
+  runId?: string;
 };

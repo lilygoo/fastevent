@@ -122,18 +122,57 @@ export function alignEventSeries(
   const day0Index = jointDates.findIndex((date) => date >= event.day0);
   if (day0Index < 0) throw new Error(`No joint trading session is available on or after ${event.day0}.`);
   const effectiveDay0 = jointDates[day0Index];
-  const startIndex = Math.max(0, day0Index - (definition.display.showPre ? definition.preDays : 0));
-  const endIndex = Math.min(jointDates.length - 1, day0Index + definition.postDays);
+  const startIndex = Math.max(0, day0Index - 10);
+  const endIndex = Math.min(jointDates.length - 1, day0Index + 50);
   const instrumentBase = instrumentRows.get(effectiveDay0)!.adjustedClose;
   const benchmarkBase = benchmarkRows.get(effectiveDay0)!.adjustedClose;
+  const dailyAbnormal = new Map<number, number>();
+  const dailyInstrument = new Map<number, number>();
+  const dailyBenchmark = new Map<number, number>();
+  for (let index = Math.max(1, startIndex); index <= endIndex; index += 1) {
+    const date = jointDates[index];
+    const previousDate = jointDates[index - 1];
+    const instrumentReturn = instrumentRows.get(date)!.adjustedClose / instrumentRows.get(previousDate)!.adjustedClose - 1;
+    const benchmarkReturn = benchmarkRows.get(date)!.adjustedClose / benchmarkRows.get(previousDate)!.adjustedClose - 1;
+    dailyInstrument.set(index, instrumentReturn);
+    dailyBenchmark.set(index, benchmarkReturn);
+    if (beta) dailyAbnormal.set(index, instrumentReturn - beta.beta * benchmarkReturn);
+  }
+
+  function betaCar(index: number) {
+    if (!beta) return null;
+    let total = 0;
+    if (index > day0Index) {
+      for (let cursor = day0Index + 1; cursor <= index; cursor += 1) total += dailyAbnormal.get(cursor) ?? 0;
+    } else if (index < day0Index) {
+      for (let cursor = index + 1; cursor <= day0Index; cursor += 1) total -= dailyAbnormal.get(cursor) ?? 0;
+    }
+    return total * 100;
+  }
+
   const points = jointDates.slice(startIndex, endIndex + 1).map((date, offset) => {
+    const index = startIndex + offset;
     const day = startIndex + offset - day0Index;
     const rawReturn = (instrumentRows.get(date)!.adjustedClose / instrumentBase - 1) * 100;
     const benchmarkReturn = (benchmarkRows.get(date)!.adjustedClose / benchmarkBase - 1) * 100;
     const excessReturn = rawReturn - benchmarkReturn;
-    const betaAdjustedReturn = beta ? rawReturn - beta.beta * benchmarkReturn : null;
+    const betaAdjustedReturn = betaCar(index);
     const value = definition.lens === "raw" ? rawReturn : definition.lens === "excess" ? excessReturn : betaAdjustedReturn;
-    return { day, date, value, rawReturn, benchmarkReturn, excessReturn, betaAdjustedReturn };
+    return {
+      day,
+      date,
+      value,
+      rawReturn,
+      benchmarkReturn,
+      excessReturn,
+      betaAdjustedReturn,
+      dailyInstrumentReturn: dailyInstrument.has(index) ? dailyInstrument.get(index)! * 100 : null,
+      dailyBenchmarkReturn: dailyBenchmark.has(index) ? dailyBenchmark.get(index)! * 100 : null,
+      dailyAbnormalReturn: dailyAbnormal.has(index) ? dailyAbnormal.get(index)! * 100 : null,
+      instrumentAdjustedPrice: instrumentRows.get(date)!.adjustedClose,
+      benchmarkAdjustedPrice: benchmarkRows.get(date)!.adjustedClose,
+      source: instrumentRows.get(date)!.source === "latest" || benchmarkRows.get(date)!.source === "latest" ? "latest" as const : "eod" as const,
+    };
   });
   return {
     eventId: event.id,
@@ -142,6 +181,7 @@ export function alignEventSeries(
     effectiveDay0,
     current,
     active: event.active,
+    beta,
     points,
     milestones: alignMilestones(event, jointDates, day0Index),
   };

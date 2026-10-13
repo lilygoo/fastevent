@@ -1,0 +1,34 @@
+name: FastEvent daily refresh
+
+on:
+  schedule:
+    - cron: "0 23 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refresh active studies serially
+        env:
+          JOB_URL: ${{ secrets.FASTEVENT_JOB_URL }}
+          JOB_SECRET: ${{ secrets.FASTEVENT_JOB_SECRET }}
+          VERCEL_BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          cursor=""
+          failures=0
+          while true; do
+            url="$JOB_URL"
+            if [ -n "$cursor" ]; then url="$JOB_URL?after=$cursor"; fi
+            response=$(curl --fail-with-body --silent --show-error --request POST \
+              --header "Authorization: Bearer $JOB_SECRET" \
+              --header "x-vercel-protection-bypass: $VERCEL_BYPASS" \
+              "$url")
+            if [ "$(jq -r '.done' <<<"$response")" = "true" ]; then break; fi
+            if [ "$(jq -r '.ok' <<<"$response")" != "true" ]; then
+              failures=$((failures + 1))
+              jq -r '"Study " + (.studyId // "unknown") + " failed: " + (.error // "unknown error")' <<<"$response"
+            fi
+            cursor=$(jq -r '.nextCursor' <<<"$response")
+          done
+          if [ "$failures" -gt 0 ]; then exit 1; fi

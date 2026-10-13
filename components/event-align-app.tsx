@@ -29,10 +29,10 @@ const TUTORIAL_FLOWS: Record<TutorialFlowKey, { name: string; duration: string; 
     summary: "Set the current event, define comparable historical Day 0s, and load the aligned return chart.",
     steps: [
       { target: "#newStudyButton", title: "Start with New study", copy: "This resets the editor to a blank working study. Your saved studies remain untouched.", hint: "Use New study when you want a separate setup rather than editing the currently loaded source." },
-      { target: "#studySetupSection", title: "Define what to compare", copy: "Name the study, choose a different instrument and benchmark, select the return lens, and set the pre- and post-event windows.", hint: "Beta-adjusted uses the cached current pair beta; Raw and Excess remain available if beta cannot be calculated." },
+      { target: "#studySetupSection", title: "Define what to compare", copy: "Name the study, choose a different instrument and benchmark, select the return lens, and set the pre- and post-event windows.", hint: "Each episode uses a beta estimated strictly before its event window. Raw and Excess remain available for any episode whose beta cannot be calculated." },
       { target: "#currentEventSection", title: "Enter the current event", copy: "Give the current event a clear label and choose its requested Day 0. As of defaults to today's U.S. Eastern date, and milestones can belong to the current event too.", hint: "A non-trading Day 0 maps forward to the next joint session. If today's joint price is unavailable, FastEvent shows the latest prior price with its date and a stale warning." },
       { target: "#pastEventsSection", title: "Add comparable past events", copy: "Each historical episode needs a name and Day 0. Add milestones when a follow-up date should appear as an annotation on the chart.", hint: "Use events with the same economic catalyst when you want the historical distribution to be meaningful." },
-      { target: "#runStudyButton", title: "Load the study data", copy: "FastEvent fills its independent adjusted-close cache, aligns joint sessions, and calculates raw, excess, and beta-adjusted returns together.", hint: "Saved studies persist the complete three-lens result snapshot. Latest prices are never polled; choose Latest and use Pull latest for a delayed quote." },
+      { target: "#runStudyButton", title: "Load the study data", copy: "FastEvent fills its independent adjusted-close cache, aligns joint sessions, and calculates raw, excess, and beta-adjusted returns together.", hint: "Saved studies persist normalized daily paths for all three lenses. Latest prices are never polled; choose Latest and use Pull latest for a delayed quote." },
       { target: "#chartPanel", title: "Read the aligned result", copy: "Every path is normalized to zero at its effective Day 0. Overlay shows individual episodes; Range emphasizes the historical median and interquartile band.", hint: "The dark EVENT D0 line is the alignment anchor. Milestones inherit their episode color, while the green latest-point guide marks the current event's newest EOD or explicitly pulled quote." },
     ],
   },
@@ -41,10 +41,10 @@ const TUTORIAL_FLOWS: Record<TutorialFlowKey, { name: string; duration: string; 
     duration: "5 steps · about 45 seconds",
     summary: "Create a shared saved source, reopen it later, and write edits back safely with revision checks.",
     steps: [
-      { target: "#saveStudyButton", title: "Save the current study", copy: "The first save creates a shared study source. Later saves update the source currently loaded in the editor.", hint: "Creating a study is one of the two moments when FastEvent checks whether the pair beta needs calculation or refresh." },
+      { target: "#saveStudyButton", title: "Save the current study", copy: "The first save creates a shared study source. Later saves update the source currently loaded in the editor.", hint: "Saving calculates a complete revision with a separate pre-event beta for every episode." },
       { target: "#studyNameInput", title: "Give the source a clear name", copy: "The study name travels with its instrument, benchmark, lens, windows, events, milestones, and display choices.", hint: "Names must be unique among active studies and can be up to 120 characters." },
       { target: "#savedStudiesButton", title: "Open Saved studies", copy: "Saved studies is the shared retrieval library. Opening the library itself does not change the working setup.", hint: "Select Load beside the source you want to reopen." },
-      { target: "#savedStudiesButton", title: "Load an earlier source", copy: "Loading restores the saved definition and checks beta freshness. A beta more than 30 calendar days old is refreshed.", hint: "If refresh fails, the previous beta remains usable and FastEvent shows a stale warning." },
+      { target: "#savedStudiesButton", title: "Load an earlier source", copy: "Loading restores the saved definition and its latest complete run, then refreshes the current market-data coverage.", hint: "A failed refresh never replaces a complete prior run with partial data." },
       { target: "#saveStudyButton", title: "Save later edits safely", copy: "After editing a loaded study, Save writes back to that exact source. Revision checks prevent silently overwriting another session's changes.", hint: "A revision conflict asks you to reload rather than replacing newer work." },
     ],
   },
@@ -137,7 +137,7 @@ function EventChart({ result, definition }: { result: EventStudyResponse; defini
   };
   const height = margin.top + plotHeight + margin.bottom;
   const selectedDistribution = result.distributions?.[definition.lens] ?? result.distribution;
-  const values = visibleSeries.flatMap((series) => series.points.flatMap((point) => {
+  const values = visibleSeries.flatMap((series) => series.points.filter((point) => point.day >= minDay && point.day <= maxDay).flatMap((point) => {
     const value = pointReturn(point, definition.lens);
     return value === null ? [] : [value];
   }));
@@ -150,7 +150,7 @@ function EventChart({ result, definition }: { result: EventStudyResponse; defini
   let yMax = Math.ceil((maxValue + pad) / tickStep) * tickStep;
   if (yMin === yMax) { yMin -= tickStep; yMax += tickStep; }
   const y = (value: number) => margin.top + ((yMax - value) / Math.max(0.001, yMax - yMin)) * (height - margin.top - margin.bottom);
-  const path = (series: EventSeries) => series.points.flatMap((point) => {
+  const path = (series: EventSeries) => series.points.filter((point) => point.day >= minDay && point.day <= maxDay).flatMap((point) => {
     const value = pointReturn(point, definition.lens);
     return value === null ? [] : [{ day: point.day, value }];
   }).map((point, index) => `${index ? "L" : "M"}${x(point.day).toFixed(1)},${y(point.value).toFixed(1)}`).join(" ");
@@ -259,6 +259,13 @@ export function EventAlignApp() {
     };
   }, [tutorial]);
 
+  function definitionMatchesSaved(next: StudyDefinition, study: SavedStudy | null) {
+    if (!study) return false;
+    const canonical = withTodayAsOf(study.definition);
+    canonical.priceMode = next.priceMode;
+    return JSON.stringify(next) === JSON.stringify(canonical);
+  }
+
   async function runStudy(next = definition, checkBeta = false, includeLatest = false, study = activeStudy) {
     setBusy(true); setError(null); setNotice(null);
     try {
@@ -268,7 +275,7 @@ export function EventAlignApp() {
           definition: next,
           checkBeta,
           includeLatest,
-          ...(study ? { studyId: study.id, studyRevision: study.revision } : {}),
+          ...(definitionMatchesSaved(next, study) ? { studyId: study!.id, studyRevision: study!.revision } : {}),
         }),
       });
       const payload = await response.json();
@@ -308,9 +315,14 @@ export function EventAlignApp() {
       if (!response.ok) throw new Error(payload.issues?.[0]?.message ?? payload.error ?? "Unable to save study.");
       const savedStudy = payload.study as SavedStudy;
       setActiveStudy(savedStudy);
-      setNotice(activeStudy ? "Study updated." : "Study saved. Beta checked for this new study.");
+      setResult((payload.result as EventStudyResponse | null) ?? null);
+      if (payload.calculationError) {
+        setError(`Study definition saved, but calculation failed. ${payload.calculationError}`);
+        setNotice(activeStudy ? "Study definition updated." : "Study definition saved.");
+      } else {
+        setNotice((payload.result?.warnings?.length ? `${payload.result.warnings.join(" ")} ` : "") + (activeStudy ? "Study updated and calculated." : "Study saved and calculated."));
+      }
       await refreshLibrary(false);
-      await runStudy(definition, !activeStudy, false, savedStudy);
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setBusy(false); }
   }
@@ -382,8 +394,8 @@ export function EventAlignApp() {
           </div>
           <Field label="Return lens"><div className="segments">{(["raw", "excess", "beta"] as const).map((lens) => <button key={lens} className={definition.lens === lens ? "active" : ""} disabled={lens === "beta" && betaDisabled} title={lens === "beta" && betaDisabled ? "Beta is unavailable for this pair." : undefined} onClick={() => setDefinition({ ...definition, lens })}>{lens === "beta" ? "β-adjusted" : lens === "excess" ? "Excess" : "Raw"}</button>)}</div></Field>
           <div className="field-row">
-            <Field label="Pre-event days"><input type="number" min={0} max={20} value={definition.preDays} onChange={(event) => setDefinition({ ...definition, preDays: Number(event.target.value) })} /></Field>
-            <Field label="Post-event days"><input type="number" min={5} max={80} value={definition.postDays} onChange={(event) => setDefinition({ ...definition, postDays: Number(event.target.value) })} /></Field>
+            <Field label="Pre-event days"><input type="number" min={0} max={10} value={definition.preDays} onChange={(event) => setDefinition({ ...definition, preDays: Number(event.target.value) })} /></Field>
+            <Field label="Post-event days"><input type="number" min={5} max={50} value={definition.postDays} onChange={(event) => setDefinition({ ...definition, postDays: Number(event.target.value) })} /></Field>
           </div>
         </Section>
 
@@ -419,20 +431,20 @@ export function EventAlignApp() {
       <section className="content">
         <div className="page-head">
           <div><span className="eyebrow">Aligned event study</span><h1>{definition.name}: {definition.instrument} vs {definition.benchmark}</h1><p>{definition.lens === "beta" ? "β-adjusted" : definition.lens === "excess" ? "Benchmark-relative" : "Raw"} cumulative return, normalized to 0 at each event&apos;s Day 0</p></div>
-          <div className="meta">{result ? <>Price date: {shortDate(result.dataAsOf)} · <strong>{result.priceStatus.toUpperCase()}</strong>{result.priceStale && <b className="stale-badge">Stale price</b>}{result.beta && <span>β {result.beta.beta.toFixed(2)} · calculated {shortDate(result.beta.calculatedAt.slice(0, 10))}</span>}</> : "Awaiting data"}</div>
+          <div className="meta">{result ? <>Price date: {shortDate(result.dataAsOf)} · <strong>{result.priceStatus.toUpperCase()}</strong>{result.priceStale && <b className="stale-badge">Stale price</b>}<span>Episode-specific β · daily CAR</span></> : "Awaiting data"}</div>
         </div>
         {error && <div className="alert error">{error}</div>}
         {notice && <div className="alert notice">{notice}</div>}
         <article id="chartPanel" className="panel chart-panel">
           <div className="panel-head"><div><h2>Performance after similar events</h2><p>Trading-day alignment using FastEvent&apos;s independent adjusted-close cache.</p></div><div className="segments compact"><button className={definition.display.view === "overlay" ? "active" : ""} onClick={() => setDefinition({ ...definition, display: { ...definition.display, view: "overlay" } })}>Overlay</button><button className={definition.display.view === "range" ? "active" : ""} onClick={() => setDefinition({ ...definition, display: { ...definition.display, view: "range" } })}>Range</button></div></div>
           {result ? <>
-            <div className="legend">{result.series.map((series) => <span key={series.eventId}><i style={{ background: seriesColor(series, result.series) }} />{series.current ? "Current · " : ""}{series.label}</span>)}{definition.display.showMedian && <span><i className="median-line" />Past median</span>}</div>
+            <div className="legend">{result.series.map((series) => <span key={series.eventId}><i style={{ background: seriesColor(series, result.series) }} />{series.current ? "Current · " : ""}{series.label}{series.beta ? ` · β ${series.beta.beta.toFixed(2)}` : " · β unavailable"}</span>)}{definition.display.showMedian && <span><i className="median-line" />Past median</span>}</div>
             <EventChart result={result} definition={definition} />
           </> : <div className="empty-chart">{busy ? <><LoaderCircle className="spin" />Loading market data…</> : <><BarChart3 />Load study data to calculate aligned returns.</>}</div>}
         </article>
 
         {result && <div className="below-grid">
-          <article className="panel"><div className="panel-head"><div><h2>Day 0 definitions</h2><p>Requested dates map to the next joint trading session when needed.</p></div></div><div className="definition-list">{result.series.map((series) => <div key={series.eventId}><CalendarDays size={15} /><span><strong>{shortDate(series.effectiveDay0)} · Day 0</strong>{series.label}{series.requestedDay0 !== series.effectiveDay0 && <small>Requested {shortDate(series.requestedDay0)}</small>}</span></div>)}</div></article>
+          <article className="panel"><div className="panel-head"><div><h2>Day 0 definitions</h2><p>Requested dates map to the next joint trading session when needed.</p></div></div><div className="definition-list">{result.series.map((series) => <div key={series.eventId}><CalendarDays size={15} /><span><strong>{shortDate(series.effectiveDay0)} · Day 0</strong>{series.label}<small>{series.beta ? `β ${series.beta.beta.toFixed(3)} through ${shortDate(series.beta.asOfDate)}` : "β unavailable"}{series.requestedDay0 !== series.effectiveDay0 ? ` · requested ${shortDate(series.requestedDay0)}` : ""}</small></span></div>)}</div></article>
           <article className="panel"><div className="panel-head"><div><h2>Visible milestones</h2><p>Annotations owned by current and historical events.</p></div></div><div className="definition-list">{allMilestones.length ? allMilestones.map((milestone) => <div key={`${milestone.eventId}-${milestone.id}`}><span className="milestone-dot" style={{ background: milestoneColors.get(milestone.eventId) }} /><span><strong>{shortDate(milestone.effectiveDate)} · {relativeDayLabel(milestone.day)}</strong>{milestone.label}<small>{milestone.eventLabel}</small></span></div>) : <p className="quiet">No visible milestones.</p>}</div></article>
         </div>}
 

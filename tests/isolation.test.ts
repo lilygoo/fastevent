@@ -19,18 +19,26 @@ test("FastEvent application code does not query shared project tables", () => {
   assert.deepEqual(offenders, []);
 });
 
-test("beta persistence is concurrency-safe for each ordered pair", () => {
-  const migration = fs.readFileSync("supabase/migrations/202610090001_fastevent.sql", "utf8");
+test("event beta persistence is concurrency-safe for each pair, cutoff, and version", () => {
+  const migration = fs.readFileSync("supabase/migrations/202610120001_normalized_runs.sql", "utf8");
   const marketData = fs.readFileSync("lib/market-data.ts", "utf8");
-  assert.match(migration, /primary key \(instrument_symbol, benchmark_symbol\)/);
-  assert.match(marketData, /onConflict: "instrument_symbol,benchmark_symbol"/);
+  assert.match(migration, /primary key \(instrument_symbol, benchmark_symbol, estimation_cutoff, calculation_version\)/);
+  assert.match(marketData, /onConflict: "instrument_symbol,benchmark_symbol,estimation_cutoff,calculation_version"/);
 });
 
-test("saved-study results persist one complete three-lens snapshot per study", () => {
-  const migration = fs.readFileSync("supabase/migrations/202610090002_fastevent_study_results.sql", "utf8");
+test("saved-study runs persist normalized events and points atomically with idempotent fingerprints", () => {
+  const migration = fs.readFileSync("supabase/migrations/202610120001_normalized_runs.sql", "utf8");
   const persistence = fs.readFileSync("lib/study-results.ts", "utf8");
-  assert.match(migration, /study_id uuid primary key references public\.fastevent_studies/);
-  assert.match(migration, /result jsonb not null/);
-  assert.match(persistence, /fastevent_study_results/);
-  assert.match(persistence, /onConflict: "study_id"/);
+  assert.match(migration, /create table if not exists public\.fastevent_study_runs/);
+  assert.match(migration, /create table if not exists public\.fastevent_study_return_points/);
+  assert.match(migration, /create or replace function public\.fastevent_store_study_run/);
+  assert.match(migration, /unique \(study_id, study_revision, input_fingerprint\)/);
+  assert.match(persistence, /fastevent_store_study_run/);
+});
+
+test("new application code does not read or write legacy beta or result tables", () => {
+  const sources = ["lib/market-data.ts", "lib/event-study-service.ts", "lib/study-results.ts"]
+    .map((file) => fs.readFileSync(file, "utf8")).join("\n");
+  assert.doesNotMatch(sources, /fastevent_betas/);
+  assert.doesNotMatch(sources, /fastevent_study_results/);
 });

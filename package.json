@@ -8,7 +8,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "node --conditions=react-server --import tsx --test tests/**/*.test.ts",
-    "bootstrap": "node --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/bootstrap.ts"
+    "bootstrap": "node --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/bootstrap.ts",
+    "recalculate-runs": "node --env-file-if-exists=.env.local --conditions=react-server --import tsx scripts/recalculate-runs.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.95.3",

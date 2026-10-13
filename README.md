@@ -18,14 +18,18 @@ Without Supabase variables, the app uses an in-memory seeded study library and c
 
 ## Database
 
-Apply the SQL files in `supabase/migrations/` to the existing Supabase project in filename order. The migrations create only these service-role-only tables:
+Apply the SQL files in `supabase/migrations/` to the existing Supabase project in filename order. The migrations create only FastEvent-owned, service-role-only tables. The current path uses:
 
 - `fastevent_prices`
 - `fastevent_price_fetches`
 - `fastevent_quote_cache`
-- `fastevent_betas`
 - `fastevent_studies`
-- `fastevent_study_results`
+- `fastevent_beta_estimates`
+- `fastevent_study_runs`
+- `fastevent_study_run_events`
+- `fastevent_study_return_points`
+
+The legacy `fastevent_betas` and `fastevent_study_results` tables remain for one rollback window, but current application code never reads or writes them.
 
 No Price Tracker or Risk Lens table is referenced. FastEvent price rows are retained indefinitely in v1.
 
@@ -35,18 +39,22 @@ Set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` only in the server environment, the
 npm run bootstrap
 ```
 
-The command inserts or updates the approved ARR study and is safe to rerun. It does not insert chart-derived returns or beta values. Prices and beta are populated through the normal study load/run path.
+The command inserts or updates the approved ARR study and is safe to rerun. It does not insert chart-derived returns or beta values. Prices, event-specific betas, and normalized runs are populated through the normal study load/run path.
 
 ## Calculation rules
 
 - All return paths and beta estimates use adjusted closes.
 - Beta uses 365 trailing calendar days of daily simple returns and OLS with an intercept.
 - A beta requires at least 200 aligned observations and 90% benchmark coverage.
-- A cached beta is fresh through exactly 30 calendar days; it refreshes only on study creation or saved-study load.
-- A failed refresh falls back to an older beta with a warning. With no beta, raw and excess inputs remain available and beta-adjusted values are null.
+- Every episode gets its own beta. Its estimation window ends on the joint session immediately before that episode's canonical D-10 session.
+- Beta estimates are immutable and cached by instrument, benchmark, estimation cutoff, and calculation version.
+- Beta-adjusted performance is daily CAR: each day's instrument return minus beta times benchmark return, summed from D+1 forward (or backwards before D0). D0 is exactly zero.
+- If an episode has no valid beta, its raw and excess paths remain available and its beta-adjusted values are null.
 - A non-trading Day 0 maps to the next joint instrument/benchmark session.
-- Every saved-study run persists raw, excess, and beta-adjusted event paths together in `fastevent_study_results`; changing the displayed lens does not require a market-data refresh.
+- Every saved-study revision persists an immutable normalized D-10 through D+50 run; changing the displayed lens does not require a market-data refresh.
 - The current study defaults its as-of date to today in U.S. Eastern time and warns when the latest joint price is older.
+- EOD mode uses finalized daily bars only. A same-day daily bar becomes final at 4:15 p.m. Eastern.
+- Latest mode is explicit: on weekdays from 9:30 a.m. through 4:00 p.m. Eastern, **Pull latest** accepts only same-day positive quotes no more than two minutes old and no more than two minutes apart. Quotes receive the latest finalized EOD adjustment factor and are never written to `fastevent_prices`.
 
 ## API
 
@@ -54,6 +62,7 @@ The command inserts or updates the approved ARR study and is safe to rerun. It d
 - `POST /api/market-data/quote`
 - `GET/POST /api/studies`
 - `GET/PATCH/DELETE /api/studies/[id]`
+- `POST /api/jobs/daily-refresh` (Bearer `FASTEVENT_JOB_SECRET`)
 
 Updates and deletes require the current `revision`; stale writes receive HTTP 409.
 
@@ -70,8 +79,10 @@ npm run build
 1. Import this repository as a Vercel Next.js project.
 2. Add `SUPABASE_URL` and `SUPABASE_SECRET_KEY` as encrypted server environment variables for each intended environment.
 3. Add the optional cache/version variables from `.env.example` if the defaults should be overridden.
-4. In Vercel project settings, enable Deployment Protection / Vercel Authentication for production and preview deployments.
-5. Deploy, apply the Supabase migration once, and run `npm run bootstrap` with production environment variables.
+4. Set `FASTEVENT_JOB_SECRET` in Vercel.
+5. In Vercel project settings, enable Deployment Protection / Vercel Authentication for production and preview deployments.
+6. Apply all Supabase migrations, deploy, and run `npm run bootstrap` followed by `npm run recalculate-runs` with production environment variables.
+7. In GitHub Actions, set `FASTEVENT_JOB_URL` to the deployed `/api/jobs/daily-refresh` URL, `FASTEVENT_JOB_SECRET` to the same job secret, and `VERCEL_AUTOMATION_BYPASS_SECRET` to a Vercel protection-bypass secret. The workflow runs weekdays at 23:00 UTC and can also be started manually.
 
 Do not create a `NEXT_PUBLIC_` Supabase secret. Yahoo access is isolated behind the server-only provider interface in `lib/market-provider.ts` so a licensed provider can replace it later.
 

@@ -9,8 +9,12 @@ test("study validation enforces symbol separation, bounds, and milestone orderin
   assert.equal(studyDefinitionSchema.safeParse(samePair).success, false);
 
   const tooLong = structuredClone(initialStudy);
-  tooLong.postDays = 81;
+  tooLong.postDays = 51;
   assert.equal(studyDefinitionSchema.safeParse(tooLong).success, false);
+
+  const tooMuchPre = structuredClone(initialStudy);
+  tooMuchPre.preDays = 11;
+  assert.equal(studyDefinitionSchema.safeParse(tooMuchPre).success, false);
 
   const earlyMilestone = structuredClone(initialStudy);
   earlyMilestone.currentEvent.milestones[0].date = "2026-10-06";

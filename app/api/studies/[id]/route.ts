@@ -1,17 +1,21 @@
 import { NextResponse } from "next/server";
 import { deleteStudy, getStudy, updateStudy } from "@/lib/studies";
-import { resolveBeta } from "@/lib/market-data";
+import { runEventStudy } from "@/lib/event-study-service";
+import { getLatestStudyRun } from "@/lib/study-results";
 import { deleteStudySchema, updateStudySchema } from "@/lib/validation";
 
 type Context = { params: Promise<{ id: string }> };
+
+export const runtime = "nodejs";
+export const maxDuration = 60;
 
 export async function GET(_request: Request, context: Context) {
   try {
     const { id } = await context.params;
     const study = await getStudy(id);
     if (!study) return NextResponse.json({ error: "Study not found." }, { status: 404 });
-    const betaResult = await resolveBeta(study.definition, true);
-    return NextResponse.json({ study, beta: betaResult.beta, warnings: betaResult.warnings });
+    const result = await getLatestStudyRun(study.id, study.revision, study.definition);
+    return NextResponse.json({ study, result });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to load the study." }, { status: 503 });
   }
@@ -24,7 +28,13 @@ export async function PATCH(request: Request, context: Context) {
     const { id } = await context.params;
     const study = await updateStudy(id, parsed.data.definition, parsed.data.revision);
     if (!study) return NextResponse.json({ error: "This study changed in another session. Reload and retry." }, { status: 409 });
-    return NextResponse.json({ study });
+    try {
+      const result = await runEventStudy(study.definition, true, false, { studyId: study.id, studyRevision: study.revision });
+      return NextResponse.json({ study, result });
+    } catch (error) {
+      return NextResponse.json({ study, result: null,
+        calculationError: error instanceof Error ? error.message : "The study was updated, but its run failed." });
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to update the study.";
     return NextResponse.json({ error: message }, { status: message.toLowerCase().includes("unique") ? 409 : 503 });
